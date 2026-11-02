@@ -77,7 +77,7 @@ remain immediately recognizable.
 
 ## Milestones
 
-**Status:** Milestone 4 complete. Next: Milestone 5 — SSR and hydration.
+**Status:** Milestone 7 complete. Next: Milestone 8 — Compiler and tooling.
 
 ### Milestone 1 — Foundation (complete)
 
@@ -162,20 +162,70 @@ Deliverables:
 Explicit non-goals for M4: hydration, keyed list diffing, event delegation,
 event modifiers, async effects, routing, and server functions.
 
-### Milestone 5 — SSR and hydration
+### Milestone 5 — SSR and hydration (complete)
 
-SSR integration, deterministic component identities, serialization protocol,
-state restoration, mismatch detection, and recovery.
+Deliverables:
 
-### Milestone 6 — Routing
+- Deterministic pre-order marker comments for every flattened DOM node, using
+  `HydrationId` values shared by the server renderer and client hydrator.
+- Hydration-aware SSR that emits markers around elements, text, and raw HTML,
+  and wraps explicit raw HTML in a `<rusty-raw-html>` display-contents container.
+- A `HydrationSession` backed by serde and `serde_json`, with stable signal keys,
+  server-side state capture, client-side restoration, and a `<script>` state
+  payload that escapes `<` in serialized JSON.
+- Client hydration that walks markers, validates tags, attributes, text, and raw
+  HTML, attaches event listeners, and adopts existing nodes in place.
+- Mismatch reporting with the failing node id and a recovery path that clears
+  the container and performs a fresh mount.
+- Facade hydration helpers for a container id and the document body, plus a
+  hydrated browser counter example.
 
-File discovery for `src/app`, nested layouts, dynamic/catch-all routes, route
-groups, loading/error/not-found boundaries, and build-time route manifests.
+Explicit non-goals for M5: streaming SSR, partial hydration, per-component
+islands, async data loading, and compiler-generated hydration boundaries.
 
-### Milestone 7 — Full stack
+### Milestone 6 — Routing (complete)
 
-`#[server]` functions, typed RPC, `route.rs` API endpoints, middleware, request
-context, authentication hooks, and CSRF protection.
+Deliverables:
+
+- `RoutePattern` and `RouteSegment` types for static, dynamic, and catch-all
+  URL segments, with validation for catch-all placement and parameter names.
+- `src/app` file discovery for `page.rs`, nested `layout.rs` chains, and nearest
+  `loading.rs`, `error.rs`, and `not_found.rs` boundaries.
+- Route groups written as `(name)`, which keep layouts without adding a URL
+  segment, and private directories beginning with `_` or `.`.
+- A `RouteManifest` with deterministic ordering, most-specific matching, typed
+  captured parameters, root not-found fallback, and duplicate-route detection.
+- JSON serialization and validated restoration for build-time route manifests.
+- A native routing example that discovers a real `src/app` tree and matches a
+  dynamic request.
+
+Explicit non-goals for M6: route handlers, API routes, middleware, links,
+client-side navigation, route prefetching, parallel routes, intercepting routes,
+optional catch-all segments, and compiler-generated entry points.
+
+### Milestone 7 — Full stack (complete)
+
+Deliverables:
+
+- Transport-neutral HTTP types: methods, status codes, validated multi-value
+  headers, requests, and responses.
+- Method-aware `HttpRouter` with route parameters, middleware, fallbacks, and
+  `404`/`405` handling.
+- `RequestContext` with typed extensions, captured parameters, and an auth
+  identity.
+- Bearer authentication middleware plus authentication traits for application
+  authenticators.
+- Double-submit-cookie CSRF middleware with generated tokens and secure cookie
+  options.
+- `#[server]` attribute macro, generated marker types, typed client stubs, native
+  invokers, and an RPC registry.
+- JSON server-function protocol with default and custom paths.
+- `route.rs` API endpoint discovery and matching alongside pages.
+- Native full-stack example covering routing, auth, CSRF, and RPC.
+
+Explicit non-goals for M7: TCP/HTTP transport adapters, async handlers,
+WebSocket subscriptions, compression, streaming, rate limiting, database
+integrations, and compiler-generated registration.
 
 ### Milestone 8 — Compiler and tooling
 
@@ -548,6 +598,73 @@ The renderer and runtime are single-threaded and synchronous. `with_dom` and
 `with_renderer` borrow the renderer immutably and must not be called from inside
 an in-progress render.
 
+## Milestone 7 architecture
+
+### HTTP runtime
+
+HTTP values are transport-neutral owned types. Header names are normalized to
+ASCII lowercase, names must be valid tokens, and values reject CR, LF, and NUL to
+prevent response splitting. `Request` exposes the raw target, path, query string,
+and undecoded query parameters. `Response` provides text, HTML, and JSON helpers
+with explicit content types.
+
+`RequestContext` pairs a request with captured route parameters, a typed
+extension map, and an optional `AuthIdentity`. Extensions are keyed by `TypeId`
+and require `Send + Sync`, so middleware can hand typed values to handlers
+without string keys.
+
+### Routing and middleware
+
+`HttpRouter` registers any-method or method-specific handlers. Route patterns use
+the M6 matcher, and the most specific matching pattern wins. Duplicate URL shapes
+for overlapping methods are rejected at registration. A path that matches but
+has no handler for the request method returns `405`; a missing path uses the
+custom fallback or `404`.
+
+Middleware is an ordered chain of `Fn(&mut RequestContext, Next)`. Each layer may
+inspect or mutate the context, short-circuit with a response, or call
+`Next::run`. Authentication middleware attaches an identity; requiring middleware
+returns `401` when credentials are absent.
+
+### Authentication and CSRF
+
+`Authenticator` resolves an optional identity from a request. The provided bearer
+authenticator stores token-to-identity mappings and compares tokens in constant
+time. Applications can implement the trait for database-backed sessions.
+
+CSRF uses the double-submit-cookie pattern. Safe methods issue a 256-bit random
+token cookie when absent and expose the token through `CsrfToken` in extensions.
+Unsafe methods require the cookie and `x-csrf-token` header to match in constant
+time. The cookie is intentionally not `HttpOnly`, is `SameSite=Lax`, and can be
+marked `Secure`.
+
+### Server functions
+
+`#[server]` accepts a synchronous, non-generic free function returning
+`Result<T, RpcError>`. Arguments must be simple identifiers and serialize as a
+tuple. The macro emits:
+
+- the original function on native targets,
+- a WebAssembly client stub with the same signature that invokes the generated
+  marker through the installed `Transport`,
+- a hidden marker implementing `ServerFunction` with the path, argument tuple,
+  and output type,
+- a native `ServerInvoker` that decodes JSON arguments, calls the function, and
+  encodes the result.
+
+Default paths are `/_rusty/rpc/<name>`; a literal or `path = "..."` overrides
+them. `RpcRegistry` registers markers by path and exposes JSON invocation plus an
+HTTP handler. Clients install a thread-local transport with `set_transport` or
+use `RpcClient`/`invoke_with` with an explicit transport. Client stubs propagate
+the original `RpcError`.
+
+### API routes
+
+`RouteManifest` records `route.rs` files as `ApiRoute` entries using the same
+directory conventions and patterns as pages. A page and API route cannot share a
+URL shape. `match_api_path` returns the endpoint and captured parameters, letting
+the compiler or an application adapter bind endpoints to handlers.
+
 ## Definition of done for each milestone
 
 1. Scope implemented with no placeholders.
@@ -557,3 +674,92 @@ an in-progress render.
 5. Formatter, compiler, Clippy, and tests pass.
 6. Plan and README status updated.
 7. Remaining limitations stated explicitly.
+
+## Milestone 5 architecture
+
+### Hydration markers
+
+The server renderer flattens fragments, then writes one comment marker before
+every DOM node in pre-order:
+
+```html
+<!--rusty:0--><main><!--rusty:1--><p><!--rusty:2-->Hello</p></main>
+```
+
+Markers use comment content rather than elements so they are invisible and
+cannot affect CSS layout. The client hydrator consumes markers in the same
+pre-order, removes each one, and uses the next sibling as the candidate node.
+This keeps identities deterministic without requiring a component graph or
+serialized tree.
+
+### State protocol
+
+Application state is shared through `HydrationSession`. Each signal is created
+with a stable key and a default:
+
+```rust
+let session = HydrationSession::server();
+let count = session.signal("count", 0_u32)?;
+```
+
+Server sessions record current signal values when `state_json` or `state_script`
+is called. Client sessions decode the same JSON and replace defaults with
+restored values. Duplicate keys are rejected so state ownership stays explicit.
+Serialized JSON escapes `<` to prevent a value from closing the state script.
+
+The state script is `<script id="__RUSTY_STATE__" type="application/json">` and
+must sit outside the hydrated container. The bootstrap script can read it with
+`HydrationSession::from_document`.
+
+### Adoption and recovery
+
+Hydration validates node kind, tag name, normalized attributes, text, and raw
+HTML. Matching nodes are adopted and event listeners are attached directly to
+them. On the first mismatch, the renderer removes the marker already consumed,
+clears the container, mounts the client tree fresh, and returns
+`HydrationOutcome::Recovered` with a `HydrationMismatch` describing the expected
+and found values. This favors a correct page over a partially adopted tree.
+
+Handlers are stored separately from attributes, so server rendering never emits
+event wiring. Client hydration attaches listeners only after the corresponding
+element has matched.
+
+## Milestone 6 architecture
+
+### Route patterns
+
+Routes are represented as ordered segments:
+
+- `Static("blog")` matches a literal segment.
+- `Dynamic("slug")` matches one segment and captures it as `slug`.
+- `CatchAll("path")` matches the remaining segments and captures them joined
+  with `/`.
+
+Catch-alls must be the final segment and must match at least one segment.
+Parameter names are validated and may appear only once in a pattern. Matching
+normalizes repeated and trailing slashes and ignores query strings and
+fragments; percent-encoded values are captured without decoding.
+
+Static segments are more specific than dynamic segments, which are more
+specific than catch-alls, compared from left to right. This allows `/shop/new`,
+`/shop/[category]`, and `/shop/[...path]` to coexist with deterministic
+precedence.
+
+### Discovery
+
+`RouteManifest::discover` walks the application directory depth-first. Directory
+names define URL segments; `(group)` directories are transparent and `_` or `.`
+directories are skipped. Each directory may contribute one layout and one of each
+boundary, which are inherited by descendants until overridden.
+
+Pages are recorded with their full URL pattern, relative page path, ordered
+layout chain, and nearest boundaries. Duplicate URL shapes are rejected even when
+they come from different route groups. Paths stored in the manifest are relative
+to the application root so the manifest can be relocated as a build artifact.
+
+### Manifests and matching
+
+A manifest serializes to JSON and is validated again when restored. Validation
+rechecks segment rules and duplicate route shapes, so a malformed artifact fails
+loudly. Route matching scans the manifest and returns the most specific match as
+a `RouteMatch` containing the entry and typed parameters.

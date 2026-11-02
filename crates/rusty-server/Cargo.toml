@@ -1,0 +1,15 @@
+[package]
+name = "rusty-server"
+description = "Transport-neutral HTTP routing, middleware, authentication, and CSRF for Rusty."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rusty-router.workspace = true
+getrandom.workspace = true

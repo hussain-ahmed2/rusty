@@ -12,3 +12,5 @@ workspace = true
 
 [dependencies]
 rusty-core.workspace = true
+rusty-hydrate.workspace = true
+rusty-vdom.workspace = true

@@ -2,7 +2,8 @@
 //!
 //! Rusty is a Rust-native full-stack framework. The current milestones provide an
 //! owned element model, the JSX-like [`view!`] macro, typed components, safe
-//! server-side HTML rendering, and fine-grained reactive primitives.
+//! server-side HTML rendering, fine-grained reactive primitives, a browser
+//! runtime, SSR hydration, and file-based routing.
 //!
 //! # Example
 //!
@@ -73,6 +74,23 @@
 //! );
 //! ```
 //!
+//! Hydration renders deterministic node markers and serializes state with stable
+//! signal keys:
+//!
+//! ```
+//! use rusty::prelude::*;
+//!
+//! let session = HydrationSession::server();
+//! let count = session.signal("count", 1_u32).expect("signal");
+//! let page = view! { <p>{count.get()}</p> };
+//!
+//! assert_eq!(
+//!     render_hydrated(&page, &session).expect("hydration render"),
+//!     "<!--rusty:0--><p><!--rusty:1-->1</p>"
+//! );
+//! assert_eq!(session.state_json().expect("state"), r#"{"count":1}"#);
+//! ```
+//!
 //! The [`client`] module mounts the same trees into a DOM and patches them when
 //! reactive state changes:
 //!
@@ -111,13 +129,32 @@ pub use rusty_core::{
     IntoElement, InvalidName, NameKind, TagName, VOID_ELEMENTS,
 };
 pub use rusty_dom::{Dom, DomError, MockDom};
-pub use rusty_macros::{component, view};
+pub use rusty_hydrate::{HydrationError, HydrationSession, HYDRATION_STATE_ID};
+pub use rusty_macros::{component, server, view};
 pub use rusty_reactivity::{
     batch, create_effect, create_root, expect_context, memo, on_cleanup, provide_context, signal,
     untrack, use_context, Effect, Memo, Owner, Signal,
 };
-pub use rusty_renderer::{ReactiveRoot, RenderError as ClientRenderError, Renderer};
-pub use rusty_ssr::{render_to_string, RenderError};
+pub use rusty_renderer::{
+    HydrationMismatch, HydrationOutcome, ReactiveRoot, RenderError as ClientRenderError, Renderer,
+};
+pub use rusty_router::{
+    ApiRoute, ApiRouteMatch, RouteEntry, RouteManifest, RouteMatch, RouteParams, RoutePattern,
+    RouteSegment, RouterError,
+};
+pub use rusty_rpc::{
+    invoke, invoke_with, set_transport, with_transport, RpcClient, RpcError, ServerFunction,
+    Transport, TransportGuard,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use rusty_rpc::{RpcRegistry, ServerInvoker};
+#[cfg(not(target_arch = "wasm32"))]
+pub use rusty_server::{
+    authenticate, csrf, require_auth, AuthIdentity, Authenticator, BearerAuthenticator,
+    CsrfMiddleware, CsrfToken, Extensions, Handler, Headers, HttpRouter, Method, Middleware, Next,
+    Request, RequestContext, Response, ServerError, StatusCode, CSRF_COOKIE, CSRF_HEADER,
+};
+pub use rusty_ssr::{render_hydrated, render_to_string, HydrationRenderError, RenderError};
 pub use rusty_vdom::{VNode, VNodeError};
 
 #[cfg(target_arch = "wasm32")]
@@ -133,6 +170,7 @@ pub mod __private {
         Attribute, AttributeName, AttributeValue, Children, Component, Element, Event,
         EventListener, EventName, IntoAttributeValue, IntoElement, TagName,
     };
+    pub use rusty_rpc::__private::*;
 
     /// Constructs an HTML element from a macro-generated literal tag name.
     ///
@@ -201,6 +239,17 @@ pub mod __private {
     }
 }
 
+/// Transport-neutral HTTP runtime.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod server {
+    pub use rusty_server::*;
+}
+
+/// Typed server-function runtime.
+pub mod rpc {
+    pub use rusty_rpc::*;
+}
+
 /// Browser-runtime exports.
 ///
 /// The module is available on every target so tests can use [`MockDom`]. The
@@ -209,7 +258,8 @@ pub mod __private {
 pub mod client {
     pub use rusty_core::Element;
     pub use rusty_dom::{Dom, DomError, MockDom};
-    pub use rusty_renderer::{ReactiveRoot, Renderer};
+    pub use rusty_hydrate::{HydrationError, HydrationSession, HYDRATION_STATE_ID};
+    pub use rusty_renderer::{HydrationMismatch, HydrationOutcome, ReactiveRoot, Renderer};
     pub use rusty_vdom::{VNode, VNodeError};
 
     pub use crate::ClientRenderError;
@@ -236,6 +286,60 @@ pub mod client {
         let body = dom.body().map_err(ClientRenderError::Dom)?;
         ReactiveRoot::mount(dom, body, view)
     }
+
+    /// Hydrates a view function into the element with the given `id`.
+    ///
+    /// Server-rendered markers must be inside that element. The state script
+    /// and bootstrap script can live elsewhere in the document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientRenderError`] when the document or element is missing,
+    /// hydration fails, or the initial render fails.
+    #[cfg(target_arch = "wasm32")]
+    pub fn hydrate_to_id<F>(
+        id: &str,
+        view: F,
+    ) -> Result<(ReactiveRoot<WebDom>, HydrationOutcome), ClientRenderError>
+    where
+        F: FnMut() -> Element + 'static,
+    {
+        let dom = WebDom::new().map_err(ClientRenderError::Dom)?;
+        let container = dom
+            .element_by_id(id)
+            .map_err(ClientRenderError::Dom)?
+            .ok_or_else(|| {
+                ClientRenderError::Dom(DomError::browser(format!(
+                    "hydration container `#{id}` was not found"
+                )))
+            })?;
+        ReactiveRoot::hydrate(dom, container, view)
+    }
+
+    /// Hydrates a view function into the document body.
+    ///
+    /// The body must contain Rusty's server-rendered markers. Read persisted
+    /// state with [`HydrationSession::from_document`] before building the view,
+    /// then capture the restored signals in the view closure.
+    ///
+    /// The returned root must be kept alive. The outcome reports whether the
+    /// server markup was adopted or rendered fresh after a mismatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientRenderError`] when the browser document is unavailable,
+    /// hydration fails, or the initial render fails.
+    #[cfg(target_arch = "wasm32")]
+    pub fn hydrate_to_body<F>(
+        view: F,
+    ) -> Result<(ReactiveRoot<WebDom>, HydrationOutcome), ClientRenderError>
+    where
+        F: FnMut() -> Element + 'static,
+    {
+        let dom = WebDom::new().map_err(ClientRenderError::Dom)?;
+        let body = dom.body().map_err(ClientRenderError::Dom)?;
+        ReactiveRoot::hydrate(dom, body, view)
+    }
 }
 
 /// Common imports for Rusty applications.
@@ -244,12 +348,22 @@ pub mod client {
 /// use rusty::prelude::*;
 /// ```
 pub mod prelude {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use crate::{
+        authenticate, csrf, require_auth, AuthIdentity, Authenticator, BearerAuthenticator,
+        CsrfMiddleware, CsrfToken, Extensions, Handler, Headers, HttpRouter, Method, Middleware,
+        Next, Request, RequestContext, Response, RpcRegistry, ServerError, ServerInvoker,
+        StatusCode, CSRF_COOKIE, CSRF_HEADER,
+    };
     pub use crate::{
         batch, component, create_effect, create_root, expect_context, memo, on_cleanup,
-        provide_context, render_to_string, signal, untrack, use_context, view, Attribute,
-        AttributeName, AttributeValue, Children, ClientRenderError, Component, Dom, DomError,
-        Effect, Element, Event, EventListener, EventName, HtmlElement, IntoAttributeValue,
-        IntoElement, Memo, MockDom, Owner, ReactiveRoot, RenderError, Renderer, Signal, TagName,
-        VNode, VNodeError,
+        provide_context, render_hydrated, render_to_string, server, signal, untrack, use_context,
+        view, ApiRoute, ApiRouteMatch, Attribute, AttributeName, AttributeValue, Children,
+        ClientRenderError, Component, Dom, DomError, Effect, Element, Event, EventListener,
+        EventName, HtmlElement, HydrationError, HydrationMismatch, HydrationOutcome,
+        HydrationRenderError, HydrationSession, IntoAttributeValue, IntoElement, Memo, MockDom,
+        Owner, ReactiveRoot, RenderError, Renderer, RouteEntry, RouteManifest, RouteMatch,
+        RouteParams, RoutePattern, RouteSegment, RouterError, RpcClient, RpcError, ServerFunction,
+        Signal, TagName, Transport, VNode, VNodeError, HYDRATION_STATE_ID,
     };
 }

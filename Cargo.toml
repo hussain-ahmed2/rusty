@@ -4,14 +4,21 @@ members = [
     "crates/rusty",
     "crates/rusty-core",
     "crates/rusty-dom",
+    "crates/rusty-hydrate",
     "crates/rusty-macros",
     "crates/rusty-reactivity",
+    "crates/rusty-router",
+    "crates/rusty-rpc",
     "crates/rusty-renderer",
+    "crates/rusty-server",
     "crates/rusty-vdom",
     "crates/rusty-ssr",
     "examples/browser",
+    "examples/full-stack",
     "examples/hello-world",
+    "examples/hydration",
     "examples/reactivity",
+    "examples/routing",
 ]
 
 [workspace.package]
@@ -25,8 +32,13 @@ authors = ["Rusty contributors"]
 rusty = { path = "crates/rusty", version = "0.1.0" }
 rusty-core = { path = "crates/rusty-core", version = "0.1.0" }
 rusty-dom = { path = "crates/rusty-dom", version = "0.1.0" }
+rusty-hydrate = { path = "crates/rusty-hydrate", version = "0.1.0" }
 rusty-macros = { path = "crates/rusty-macros", version = "0.1.0" }
 rusty-reactivity = { path = "crates/rusty-reactivity", version = "0.1.0" }
+rusty-router = { path = "crates/rusty-router", version = "0.1.0" }
+rusty-rpc = { path = "crates/rusty-rpc", version = "0.1.0" }
+rusty-server = { path = "crates/rusty-server", version = "0.1.0" }
+getrandom = { version = "0.2", features = ["js"] }
 rusty-renderer = { path = "crates/rusty-renderer", version = "0.1.0" }
 rusty-vdom = { path = "crates/rusty-vdom", version = "0.1.0" }
 rusty-ssr = { path = "crates/rusty-ssr", version = "0.1.0" }
@@ -34,9 +46,12 @@ rusty-ssr = { path = "crates/rusty-ssr", version = "0.1.0" }
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = [
+    "Comment",
     "Document",
     "Element",
     "Event",

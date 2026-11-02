@@ -58,6 +58,21 @@ impl fmt::Display for DomError {
 
 impl Error for DomError {}
 
+/// The kind of a DOM node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeKind {
+    /// A normal element.
+    Element,
+    /// A text node.
+    Text,
+    /// A comment node.
+    Comment,
+    /// An opaque trusted raw HTML node.
+    RawHtml,
+    /// Any other node kind, such as a document or fragment.
+    Other,
+}
+
 /// A minimal DOM used by the renderer.
 ///
 /// Node handles are cheap to clone and compare by identity. Implementations must
@@ -74,6 +89,33 @@ pub trait Dom {
 
     /// Creates an opaque node for trusted raw HTML.
     fn create_raw_html(&mut self, html: &str) -> Result<Self::Node, DomError>;
+
+    /// Creates a comment node.
+    fn create_comment(&mut self, text: &str) -> Result<Self::Node, DomError>;
+
+    /// Returns the first child of a node.
+    fn first_child(&self, parent: &Self::Node) -> Result<Option<Self::Node>, DomError>;
+
+    /// Returns the next sibling of a node.
+    fn next_sibling(&self, node: &Self::Node) -> Result<Option<Self::Node>, DomError>;
+
+    /// Returns the kind of a node.
+    fn node_kind(&self, node: &Self::Node) -> Result<NodeKind, DomError>;
+
+    /// Returns the tag name for an element node.
+    fn tag_name(&self, node: &Self::Node) -> Result<Option<String>, DomError>;
+
+    /// Returns the content of a text node.
+    fn text(&self, node: &Self::Node) -> Result<Option<String>, DomError>;
+
+    /// Returns the content of a comment node.
+    fn comment(&self, node: &Self::Node) -> Result<Option<String>, DomError>;
+
+    /// Returns the trusted markup of a raw HTML node.
+    fn raw_html(&self, node: &Self::Node) -> Result<Option<String>, DomError>;
+
+    /// Returns attributes as name/value pairs, using `""` for boolean attributes.
+    fn attributes(&self, node: &Self::Node) -> Result<Vec<(String, String)>, DomError>;
 
     /// Appends `child` to `parent`.
     fn append_child(&mut self, parent: &Self::Node, child: &Self::Node) -> Result<(), DomError>;

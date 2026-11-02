@@ -14,9 +14,9 @@ use std::fmt;
 use std::rc::Rc;
 
 use rusty_core::Element;
-use rusty_dom::{Dom, DomError};
+use rusty_dom::{Dom, DomError, NodeKind};
 use rusty_reactivity::{create_effect, create_root, Owner};
-use rusty_vdom::{VElement, VNode, VNodeError};
+use rusty_vdom::{HydrationId, VElement, VNode, VNodeError};
 
 /// An error from mounting or patching a DOM tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +27,8 @@ pub enum RenderError {
     Dom(DomError),
     /// A renderer was reused with a different container node.
     ContainerChanged,
+    /// Hydration was attempted on a renderer that already mounted content.
+    AlreadyMounted,
 }
 
 impl fmt::Display for RenderError {
@@ -37,6 +39,9 @@ impl fmt::Display for RenderError {
             Self::ContainerChanged => {
                 formatter.write_str("renderer cannot switch to a different container")
             }
+            Self::AlreadyMounted => {
+                formatter.write_str("renderer already mounted content; create a new renderer")
+            }
         }
     }
 }
@@ -46,7 +51,7 @@ impl Error for RenderError {
         match self {
             Self::Vdom(error) => Some(error),
             Self::Dom(error) => Some(error),
-            Self::ContainerChanged => None,
+            Self::ContainerChanged | Self::AlreadyMounted => None,
         }
     }
 }
@@ -61,6 +66,55 @@ impl From<DomError> for RenderError {
     fn from(error: DomError) -> Self {
         Self::Dom(error)
     }
+}
+
+/// A mismatch found while adopting server-rendered DOM nodes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HydrationMismatch {
+    id: u64,
+    expected: String,
+    found: String,
+}
+
+impl HydrationMismatch {
+    /// Returns the deterministic node identity where hydration diverged.
+    #[must_use]
+    pub const fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Returns what the client tree expected.
+    #[must_use]
+    pub fn expected(&self) -> &str {
+        &self.expected
+    }
+
+    /// Returns what the server DOM contained.
+    #[must_use]
+    pub fn found(&self) -> &str {
+        &self.found
+    }
+}
+
+impl fmt::Display for HydrationMismatch {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "hydration mismatch at node {}: expected {}, found {}",
+            self.id, self.expected, self.found
+        )
+    }
+}
+
+impl Error for HydrationMismatch {}
+
+/// The result of a hydration attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HydrationOutcome {
+    /// Server-rendered nodes were adopted successfully.
+    Hydrated,
+    /// Server-rendered nodes did not match; the container was rendered fresh.
+    Recovered(HydrationMismatch),
 }
 
 /// A renderer that mounts and patches an element tree.
@@ -124,6 +178,60 @@ impl<D: Dom> Renderer<D> {
         let next = flatten(node);
         patch_children(&mut self.dom, container, &mut self.roots, &next)?;
         Ok(())
+    }
+
+    /// Hydrates server-rendered markup inside `container`.
+    ///
+    /// On a mismatch, the existing container content is removed and the tree is
+    /// mounted fresh. The returned outcome reports whether recovery occurred.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the tree is invalid or a DOM operation fails.
+    pub fn hydrate(
+        &mut self,
+        container: &D::Node,
+        element: Element,
+    ) -> Result<HydrationOutcome, RenderError> {
+        let node = VNode::try_from(element)?;
+        self.hydrate_vnode(container, node)
+    }
+
+    /// Hydrates a prepared virtual tree inside `container`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when a DOM operation fails, the tree is invalid,
+    /// or the renderer already mounted content.
+    pub fn hydrate_vnode(
+        &mut self,
+        container: &D::Node,
+        node: VNode,
+    ) -> Result<HydrationOutcome, RenderError> {
+        if self.container.is_some() {
+            return Err(RenderError::AlreadyMounted);
+        }
+
+        let next = flatten(node);
+        let mut id = HydrationId::new(0);
+
+        match hydrate_children(&mut self.dom, container, &next, &mut id) {
+            Ok(roots) => {
+                self.container = Some(container.clone());
+                self.roots = roots;
+                Ok(HydrationOutcome::Hydrated)
+            }
+            Err(HydrationFailure::Mismatch(mismatch)) => {
+                clear_children(&mut self.dom, container)?;
+                let mut roots = Vec::new();
+                patch_children(&mut self.dom, container, &mut roots, &next)?;
+                self.container = Some(container.clone());
+                self.roots = roots;
+                Ok(HydrationOutcome::Recovered(mismatch))
+            }
+            Err(HydrationFailure::Render(error)) => Err(error),
+            Err(HydrationFailure::Dom(error)) => Err(error.into()),
+        }
     }
 
     /// Removes all mounted roots from the DOM.
@@ -323,6 +431,301 @@ fn validate_element(element: &VElement) -> Result<(), RenderError> {
     Ok(())
 }
 
+enum HydrationFailure {
+    Render(RenderError),
+    Dom(DomError),
+    Mismatch(HydrationMismatch),
+}
+
+impl From<RenderError> for HydrationFailure {
+    fn from(error: RenderError) -> Self {
+        Self::Render(error)
+    }
+}
+
+impl From<DomError> for HydrationFailure {
+    fn from(error: DomError) -> Self {
+        Self::Dom(error)
+    }
+}
+
+fn hydrate_children<D: Dom>(
+    dom: &mut D,
+    parent: &D::Node,
+    next: &[VNode],
+    id: &mut HydrationId,
+) -> Result<Vec<MountedNode<D>>, HydrationFailure> {
+    let mut mounted = Vec::new();
+    let mut cursor = dom.first_child(parent)?;
+
+    for node in next {
+        let node_id = *id;
+        let marker = cursor.take().ok_or_else(|| {
+            mismatch(
+                node_id,
+                "a hydration marker comment",
+                "the end of the container",
+            )
+        })?;
+        let marker_kind = dom.node_kind(&marker)?;
+        if marker_kind != NodeKind::Comment {
+            return Err(mismatch(
+                node_id,
+                "a hydration marker comment",
+                &describe_node(dom, &marker)?,
+            ));
+        }
+
+        let comment = dom.comment(&marker)?.unwrap_or_default();
+        if HydrationId::parse(&comment) != Some(node_id) {
+            return Err(mismatch(
+                node_id,
+                &format!("marker {:?}", node_id.content()),
+                &format!("comment {comment:?}"),
+            ));
+        }
+
+        let candidate = dom.next_sibling(&marker)?;
+        dom.remove_child(parent, &marker)?;
+        *id = HydrationId::new(node_id.value() + 1);
+
+        let (mounted_node, next_cursor) = match node {
+            VNode::Element(element) => {
+                let candidate = candidate.ok_or_else(|| {
+                    mismatch(
+                        node_id,
+                        &format!("element <{}>", element.tag().as_str()),
+                        "the end of the container",
+                    )
+                })?;
+                let next_cursor = dom.next_sibling(&candidate)?;
+                let children = hydrate_element(dom, &candidate, element, id, node_id)?;
+                (
+                    MountedNode {
+                        node: candidate,
+                        vnode: node.clone(),
+                        children,
+                    },
+                    next_cursor,
+                )
+            }
+            VNode::Text(text) => hydrate_text(dom, parent, candidate, text, node_id)?,
+            VNode::RawHtml(html) => {
+                let candidate = candidate.ok_or_else(|| {
+                    mismatch(node_id, "a raw HTML node", "the end of the container")
+                })?;
+                if dom.node_kind(&candidate)? != NodeKind::RawHtml {
+                    return Err(mismatch(
+                        node_id,
+                        "a raw HTML node",
+                        &describe_node(dom, &candidate)?,
+                    ));
+                }
+                if dom.raw_html(&candidate)?.as_deref() != Some(html.as_str()) {
+                    return Err(mismatch(
+                        node_id,
+                        &format!("raw HTML {html:?}"),
+                        &format!(
+                            "raw HTML {:?}",
+                            dom.raw_html(&candidate)?.unwrap_or_default()
+                        ),
+                    ));
+                }
+                let next_cursor = dom.next_sibling(&candidate)?;
+                (
+                    MountedNode {
+                        node: candidate,
+                        vnode: node.clone(),
+                        children: Vec::new(),
+                    },
+                    next_cursor,
+                )
+            }
+            VNode::Fragment(_) => {
+                unreachable!("fragments are flattened before hydration")
+            }
+        };
+
+        mounted.push(mounted_node);
+        cursor = next_cursor;
+    }
+
+    if let Some(extra) = cursor {
+        return Err(mismatch(
+            *id,
+            "the end of the container",
+            &describe_node(dom, &extra)?,
+        ));
+    }
+
+    Ok(mounted)
+}
+
+fn hydrate_element<D: Dom>(
+    dom: &mut D,
+    node: &D::Node,
+    element: &VElement,
+    id: &mut HydrationId,
+    node_id: HydrationId,
+) -> Result<Vec<MountedNode<D>>, HydrationFailure> {
+    validate_element(element)?;
+
+    if dom.node_kind(node)? != NodeKind::Element {
+        return Err(mismatch(
+            node_id,
+            &format!("element <{}>", element.tag().as_str()),
+            &describe_node(dom, node)?,
+        ));
+    }
+
+    let actual_tag = dom.tag_name(node)?.unwrap_or_default();
+    if actual_tag != element.tag().as_str().to_ascii_lowercase() {
+        return Err(mismatch(
+            node_id,
+            &format!("<{}>", element.tag().as_str().to_ascii_lowercase()),
+            &format!("<{actual_tag}>"),
+        ));
+    }
+
+    let mut expected_attributes = element
+        .attributes()
+        .iter()
+        .filter_map(|attribute| match attribute.value() {
+            rusty_core::AttributeValue::Text(value) => Some((
+                attribute.name().as_str().to_ascii_lowercase(),
+                value.clone(),
+            )),
+            rusty_core::AttributeValue::Bool(true) => Some((
+                attribute.name().as_str().to_ascii_lowercase(),
+                String::new(),
+            )),
+            rusty_core::AttributeValue::Bool(false) | rusty_core::AttributeValue::None => None,
+        })
+        .collect::<Vec<_>>();
+    let mut actual_attributes = dom
+        .attributes(node)?
+        .into_iter()
+        .map(|(name, value)| (name.to_ascii_lowercase(), value))
+        .collect::<Vec<_>>();
+    expected_attributes.sort();
+    actual_attributes.sort();
+
+    if actual_attributes != expected_attributes {
+        return Err(mismatch(
+            node_id,
+            &format!("attributes {expected_attributes:?}"),
+            &format!("attributes {actual_attributes:?}"),
+        ));
+    }
+
+    for listener in element.listeners() {
+        dom.set_event_listener(node, listener.clone())?;
+    }
+
+    hydrate_children(dom, node, &flatten_slice(element.children()), id)
+}
+
+fn hydrate_text<D: Dom>(
+    dom: &mut D,
+    parent: &D::Node,
+    candidate: Option<D::Node>,
+    text: &str,
+    node_id: HydrationId,
+) -> Result<(MountedNode<D>, Option<D::Node>), HydrationFailure> {
+    if text.is_empty() {
+        if let Some(candidate) = candidate {
+            if dom.node_kind(&candidate)? == NodeKind::Text
+                && dom.text(&candidate)?.as_deref() == Some("")
+            {
+                let next_cursor = dom.next_sibling(&candidate)?;
+                return Ok((
+                    MountedNode {
+                        node: candidate,
+                        vnode: VNode::text(""),
+                        children: Vec::new(),
+                    },
+                    next_cursor,
+                ));
+            }
+
+            let node = dom.create_text("")?;
+            dom.insert_before(parent, &node, &candidate)?;
+            return Ok((
+                MountedNode {
+                    node,
+                    vnode: VNode::text(""),
+                    children: Vec::new(),
+                },
+                Some(candidate),
+            ));
+        }
+
+        let node = dom.create_text("")?;
+        dom.append_child(parent, &node)?;
+        return Ok((
+            MountedNode {
+                node,
+                vnode: VNode::text(""),
+                children: Vec::new(),
+            },
+            None,
+        ));
+    }
+
+    let candidate = candidate.ok_or_else(|| {
+        mismatch(
+            node_id,
+            &format!("text {text:?}"),
+            "the end of the container",
+        )
+    })?;
+    if dom.node_kind(&candidate)? != NodeKind::Text
+        || dom.text(&candidate)?.as_deref() != Some(text)
+    {
+        return Err(mismatch(
+            node_id,
+            &format!("text {text:?}"),
+            &describe_node(dom, &candidate)?,
+        ));
+    }
+
+    let next_cursor = dom.next_sibling(&candidate)?;
+    Ok((
+        MountedNode {
+            node: candidate,
+            vnode: VNode::text(text),
+            children: Vec::new(),
+        },
+        next_cursor,
+    ))
+}
+
+fn clear_children<D: Dom>(dom: &mut D, parent: &D::Node) -> Result<(), DomError> {
+    while let Some(child) = dom.first_child(parent)? {
+        dom.remove_child(parent, &child)?;
+    }
+
+    Ok(())
+}
+
+fn describe_node<D: Dom>(dom: &D, node: &D::Node) -> Result<String, DomError> {
+    Ok(match dom.node_kind(node)? {
+        NodeKind::Element => format!("element <{}>", dom.tag_name(node)?.unwrap_or_default()),
+        NodeKind::Text => format!("text {:?}", dom.text(node)?.unwrap_or_default()),
+        NodeKind::Comment => format!("comment {:?}", dom.comment(node)?.unwrap_or_default()),
+        NodeKind::RawHtml => String::from("raw HTML node"),
+        NodeKind::Other => String::from("an unsupported node"),
+    })
+}
+
+fn mismatch(id: HydrationId, expected: &str, found: &str) -> HydrationFailure {
+    HydrationFailure::Mismatch(HydrationMismatch {
+        id: id.value(),
+        expected: expected.to_owned(),
+        found: found.to_owned(),
+    })
+}
+
 fn apply_attributes<D: Dom>(
     dom: &mut D,
     node: &D::Node,
@@ -478,6 +881,67 @@ impl<D: Dom + 'static> ReactiveRoot<D> {
             _owner: owner,
             renderer,
         })
+    }
+
+    /// Hydrates a view function and rerenders it when its signals change.
+    ///
+    /// The existing server markup is adopted instead of remounted. If markup
+    /// cannot be adopted, the container is cleared, the tree is mounted fresh,
+    /// and the returned outcome reports the mismatch. State that must survive
+    /// the first effect run, such as restored signals, should be created before
+    /// hydration and captured by the view closure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the initial hydration or render fails.
+    /// Later render failures panic because they occur inside the effect.
+    pub fn hydrate<F>(
+        dom: D,
+        container: D::Node,
+        mut view: F,
+    ) -> Result<(Self, HydrationOutcome), RenderError>
+    where
+        F: FnMut() -> Element + 'static,
+    {
+        let renderer = Rc::new(RefCell::new(Renderer::new(dom)));
+        let outcome = renderer.borrow_mut().hydrate(&container, view())?;
+        let initial = Rc::new(std::cell::Cell::new(true));
+        let error = Rc::new(RefCell::new(None));
+
+        let (owner, ()) = create_root(|| {
+            let effect_renderer = Rc::clone(&renderer);
+            let effect_container = container.clone();
+            let effect_initial = Rc::clone(&initial);
+            let effect_error = Rc::clone(&error);
+
+            let _ = create_effect(move || {
+                let is_initial = effect_initial.replace(false);
+                let element = view();
+                let result = effect_renderer
+                    .borrow_mut()
+                    .render(&effect_container, element);
+
+                match result {
+                    Ok(()) => {}
+                    Err(error) if is_initial => {
+                        *effect_error.borrow_mut() = Some(error);
+                    }
+                    Err(error) => panic!("Rusty client render failed: {error}"),
+                }
+            });
+        });
+
+        if let Some(error) = error.borrow_mut().take() {
+            return Err(error);
+        }
+
+        Ok((
+            Self {
+                _owner: owner,
+                renderer,
+            },
+            outcome,
+        ))
     }
 
     /// Runs `f` with immutable access to the live renderer.
@@ -782,6 +1246,261 @@ mod tests {
             renderer.render_vnode(&container, invalid),
             Err(RenderError::Vdom(VNodeError::ChildrenInVoidElement { .. }))
         ));
+    }
+
+    fn append_marker(dom: &mut MockDom, parent: &rusty_dom::MockNode, id: u64) {
+        let marker = dom
+            .create_comment(&HydrationId::new(id).content())
+            .expect("marker");
+        dom.append_child(parent, &marker).expect("append marker");
+    }
+
+    #[test]
+    fn hydrates_server_markup_in_place() {
+        let mut dom = MockDom::new();
+        let container = dom.create_element("div").expect("container");
+        let main = dom.create_element("main").expect("main");
+        let heading = dom.create_element("h1").expect("h1");
+        let text = dom.create_text("Title").expect("text");
+
+        append_marker(&mut dom, &container, 0);
+        dom.append_child(&container, &main).expect("append main");
+        append_marker(&mut dom, &main, 1);
+        dom.append_child(&main, &heading).expect("append heading");
+        append_marker(&mut dom, &heading, 2);
+        dom.append_child(&heading, &text).expect("append text");
+
+        let mut renderer = Renderer::new(dom);
+        let page = Element::html(
+            tag("main"),
+            Vec::new(),
+            vec![Element::html(
+                tag("h1"),
+                Vec::new(),
+                vec![Element::text("Title")],
+            )],
+        );
+
+        assert_eq!(
+            renderer.hydrate(&container, page),
+            Ok(HydrationOutcome::Hydrated)
+        );
+        assert_eq!(
+            renderer.dom().to_html(&container),
+            "<div><main><h1>Title</h1></main></div>"
+        );
+        assert_eq!(
+            renderer.dom().children(&container).expect("children"),
+            [main]
+        );
+        assert_eq!(
+            renderer.dom().children(&heading).expect("heading children"),
+            [text]
+        );
+    }
+
+    #[test]
+    fn hydrates_fragments_and_empty_text() {
+        let mut dom = MockDom::new();
+        let container = dom.create_element("div").expect("container");
+        let paragraph_node = dom.create_element("p").expect("p");
+
+        append_marker(&mut dom, &container, 0);
+        append_marker(&mut dom, &container, 1);
+        dom.append_child(&container, &paragraph_node)
+            .expect("append p");
+
+        let mut renderer = Renderer::new(dom);
+        let page = Element::fragment([
+            Element::text(""),
+            Element::html(tag("p"), Vec::new(), vec![]),
+        ]);
+
+        assert_eq!(
+            renderer.hydrate(&container, page),
+            Ok(HydrationOutcome::Hydrated)
+        );
+
+        let children = renderer.dom().children(&container).expect("children");
+        assert_eq!(children.len(), 2);
+        assert_eq!(renderer.dom().text(&children[0]).as_deref(), Some(""));
+        assert_eq!(children[1], paragraph_node);
+    }
+
+    #[test]
+    fn hydrates_raw_html_with_its_wrapper_node() {
+        let mut dom = MockDom::new();
+        let container = dom.create_element("div").expect("container");
+        let raw = dom.create_raw_html("<b>raw</b>").expect("raw");
+
+        append_marker(&mut dom, &container, 0);
+        dom.append_child(&container, &raw).expect("append raw");
+
+        let mut renderer = Renderer::new(dom);
+        assert_eq!(
+            renderer.hydrate(&container, Element::raw_html("<b>raw</b>")),
+            Ok(HydrationOutcome::Hydrated)
+        );
+        assert_eq!(
+            renderer.dom().children(&container).expect("children"),
+            [raw]
+        );
+        assert_eq!(renderer.dom().to_html(&container), "<div><b>raw</b></div>");
+    }
+
+    #[test]
+    fn recovers_from_text_mismatches_and_reports_the_node() {
+        let mut dom = MockDom::new();
+        let container = dom.create_element("div").expect("container");
+        let paragraph_node = dom.create_element("p").expect("p");
+        let server_text = dom.create_text("server").expect("text");
+
+        append_marker(&mut dom, &container, 0);
+        dom.append_child(&container, &paragraph_node)
+            .expect("append p");
+        append_marker(&mut dom, &paragraph_node, 1);
+        dom.append_child(&paragraph_node, &server_text)
+            .expect("append text");
+
+        let mut renderer = Renderer::new(dom);
+        let outcome = renderer
+            .hydrate(&container, paragraph("client"))
+            .expect("hydrate");
+
+        let HydrationOutcome::Recovered(mismatch) = outcome else {
+            panic!("expected recovery");
+        };
+        assert_eq!(mismatch.id(), 1);
+        assert_eq!(mismatch.expected(), "text \"client\"");
+        assert_eq!(mismatch.found(), "text \"server\"");
+        assert_eq!(
+            renderer.dom().to_html(&container),
+            "<div><p>client</p></div>"
+        );
+    }
+
+    #[test]
+    fn recovers_from_extra_node_mismatches() {
+        let mut dom = MockDom::new();
+        let container = dom.create_element("div").expect("container");
+        let paragraph_node = dom.create_element("p").expect("p");
+        let text = dom.create_text("a").expect("text");
+        let extra = dom.create_text("extra").expect("extra");
+
+        append_marker(&mut dom, &container, 0);
+        dom.append_child(&container, &paragraph_node)
+            .expect("append p");
+        append_marker(&mut dom, &paragraph_node, 1);
+        dom.append_child(&paragraph_node, &text)
+            .expect("append text");
+        dom.append_child(&container, &extra).expect("append extra");
+
+        let mut renderer = Renderer::new(dom);
+        let outcome = renderer
+            .hydrate(&container, paragraph("a"))
+            .expect("hydrate");
+        let HydrationOutcome::Recovered(mismatch) = outcome else {
+            panic!("expected recovery");
+        };
+        assert_eq!(mismatch.id(), 2);
+        assert_eq!(renderer.dom().to_html(&container), "<div><p>a</p></div>");
+    }
+
+    #[test]
+    fn recovers_from_attribute_mismatches() {
+        let mut dom = MockDom::new();
+        let container = dom.create_element("div").expect("container");
+        let paragraph_node = dom.create_element("p").expect("p");
+
+        append_marker(&mut dom, &container, 0);
+        dom.append_child(&container, &paragraph_node)
+            .expect("append p");
+        append_marker(&mut dom, &paragraph_node, 1);
+        let text = dom.create_text("value").expect("text");
+        dom.append_child(&paragraph_node, &text)
+            .expect("append text");
+        dom.set_attribute(&paragraph_node, "class", "server")
+            .expect("attribute");
+
+        let mut renderer = Renderer::new(dom);
+        let outcome = renderer
+            .hydrate(
+                &container,
+                Element::html(
+                    tag("p"),
+                    vec![attribute("class", "client")],
+                    vec![Element::text("value")],
+                ),
+            )
+            .expect("hydrate");
+        let HydrationOutcome::Recovered(mismatch) = outcome else {
+            panic!("expected recovery");
+        };
+        assert_eq!(mismatch.id(), 0);
+        assert_eq!(
+            renderer.dom().to_html(&container),
+            "<div><p class=\"client\">value</p></div>"
+        );
+    }
+
+    #[test]
+    fn reactive_root_hydrates_and_patches_adopted_nodes() {
+        use rusty_reactivity::Signal;
+
+        let count = Signal::new(0_u32);
+        let mut dom = MockDom::new();
+        let container = dom.create_element("div").expect("container");
+        let paragraph_node = dom.create_element("p").expect("p");
+        let text = dom.create_text("0").expect("text");
+
+        append_marker(&mut dom, &container, 0);
+        dom.append_child(&container, &paragraph_node)
+            .expect("append p");
+        append_marker(&mut dom, &paragraph_node, 1);
+        dom.append_child(&paragraph_node, &text)
+            .expect("append text");
+
+        let (root, outcome) = ReactiveRoot::hydrate(dom, container, {
+            let count = count.clone();
+            move || paragraph(&count.get().to_string())
+        })
+        .expect("hydrate");
+
+        assert_eq!(outcome, HydrationOutcome::Hydrated);
+        let first = root.with_dom(|dom| {
+            dom.children(&container)
+                .expect("children")
+                .first()
+                .copied()
+                .expect("paragraph")
+        });
+        assert_eq!(first, paragraph_node);
+
+        count.set(5);
+        assert_eq!(
+            root.with_dom(|dom| dom.to_html(&container)),
+            "<div><p>5</p></div>"
+        );
+        assert_eq!(
+            root.with_dom(|dom| dom.children(&container).expect("children")[0]),
+            paragraph_node
+        );
+        assert_eq!(root.with_dom(|dom| dom.text(&text)), Some("5".to_owned()));
+    }
+
+    #[test]
+    fn rejects_hydration_after_mounting() {
+        let mut dom = MockDom::new();
+        let container = dom.create_element("div").expect("container");
+        let mut renderer = Renderer::new(dom);
+
+        renderer
+            .render(&container, paragraph("mounted"))
+            .expect("render");
+        assert_eq!(
+            renderer.hydrate(&container, paragraph("mounted")),
+            Err(RenderError::AlreadyMounted)
+        );
     }
 
     #[test]

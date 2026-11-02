@@ -13,6 +13,10 @@ use std::fmt;
 
 use rusty_core::{is_void_element, Attribute, Element, EventListener, TagName};
 
+mod hydration;
+
+pub use hydration::HydrationId;
+
 /// A client-renderable node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VNode {

@@ -13,7 +13,7 @@ use web_sys::{
     Node, Text,
 };
 
-use crate::{Dom, DomError};
+use crate::{Dom, DomError, NodeKind};
 
 type ListenerClosure = Closure<dyn FnMut(WebEvent)>;
 
@@ -32,7 +32,9 @@ struct WebNodeInner {
 enum WebNodeKind {
     Element(Element),
     Text(Text),
+    Comment,
     RawHtml(Element),
+    Other,
 }
 
 impl WebNode {
@@ -46,12 +48,33 @@ impl WebNode {
         }
     }
 
+    fn from_node(node: Node) -> Self {
+        let kind = match node.node_type() {
+            Node::ELEMENT_NODE => node
+                .dyn_ref::<Element>()
+                .map_or(WebNodeKind::Other, |element| {
+                    if element.tag_name().eq_ignore_ascii_case("rusty-raw-html") {
+                        WebNodeKind::RawHtml(element.clone())
+                    } else {
+                        WebNodeKind::Element(element.clone())
+                    }
+                }),
+            Node::TEXT_NODE => node
+                .dyn_ref::<Text>()
+                .map_or(WebNodeKind::Other, |text| WebNodeKind::Text(text.clone())),
+            Node::COMMENT_NODE => WebNodeKind::Comment,
+            _ => WebNodeKind::Other,
+        };
+
+        Self::new(node, kind)
+    }
+
     fn element(&self) -> Result<&Element, DomError> {
         match &self.inner.kind {
             WebNodeKind::Element(element) | WebNodeKind::RawHtml(element) => Ok(element),
-            WebNodeKind::Text(_) => Err(DomError::invalid_operation(
-                "operation requires an element node",
-            )),
+            WebNodeKind::Text(_) | WebNodeKind::Comment | WebNodeKind::Other => Err(
+                DomError::invalid_operation("operation requires an element node"),
+            ),
         }
     }
 }
@@ -105,6 +128,18 @@ impl WebDom {
         Ok(WebNode::new(node, WebNodeKind::Element(element)))
     }
 
+    /// Returns an element by its `id` attribute.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomError`] when the browser document is unavailable.
+    pub fn element_by_id(&self, id: &str) -> Result<Option<WebNode>, DomError> {
+        Ok(self.document.get_element_by_id(id).map(|element| {
+            let node: Node = element.unchecked_into();
+            WebNode::from_node(node)
+        }))
+    }
+
     fn create_element_node(&self, tag: &str) -> Result<(Element, Node), DomError> {
         let element = self.document.create_element(tag).map_err(js_error)?;
         let node: Node = element.clone().unchecked_into();
@@ -133,6 +168,86 @@ impl Dom for WebDom {
             .map_err(js_error)?;
         element.set_inner_html(html);
         Ok(WebNode::new(node, WebNodeKind::RawHtml(element)))
+    }
+
+    fn create_comment(&mut self, text: &str) -> Result<Self::Node, DomError> {
+        let comment = self.document.create_comment(text);
+        let node: Node = comment.unchecked_into();
+        Ok(WebNode::new(node, WebNodeKind::Comment))
+    }
+
+    fn first_child(&self, parent: &Self::Node) -> Result<Option<Self::Node>, DomError> {
+        Ok(parent.inner.node.first_child().map(WebNode::from_node))
+    }
+
+    fn next_sibling(&self, node: &Self::Node) -> Result<Option<Self::Node>, DomError> {
+        Ok(node.inner.node.next_sibling().map(WebNode::from_node))
+    }
+
+    fn node_kind(&self, node: &Self::Node) -> Result<NodeKind, DomError> {
+        Ok(match node.inner.kind {
+            WebNodeKind::Element(_) => NodeKind::Element,
+            WebNodeKind::Text(_) => NodeKind::Text,
+            WebNodeKind::Comment => NodeKind::Comment,
+            WebNodeKind::RawHtml(_) => NodeKind::RawHtml,
+            WebNodeKind::Other => NodeKind::Other,
+        })
+    }
+
+    fn tag_name(&self, node: &Self::Node) -> Result<Option<String>, DomError> {
+        Ok(match &node.inner.kind {
+            WebNodeKind::Element(element) | WebNodeKind::RawHtml(element) => {
+                Some(element.tag_name().to_ascii_lowercase())
+            }
+            WebNodeKind::Text(_) | WebNodeKind::Comment | WebNodeKind::Other => None,
+        })
+    }
+
+    fn text(&self, node: &Self::Node) -> Result<Option<String>, DomError> {
+        Ok(match &node.inner.kind {
+            WebNodeKind::Text(_) => node.inner.node.node_value(),
+            WebNodeKind::Element(_)
+            | WebNodeKind::Comment
+            | WebNodeKind::RawHtml(_)
+            | WebNodeKind::Other => None,
+        })
+    }
+
+    fn comment(&self, node: &Self::Node) -> Result<Option<String>, DomError> {
+        Ok(match &node.inner.kind {
+            WebNodeKind::Comment => node.inner.node.node_value(),
+            WebNodeKind::Element(_)
+            | WebNodeKind::Text(_)
+            | WebNodeKind::RawHtml(_)
+            | WebNodeKind::Other => None,
+        })
+    }
+
+    fn raw_html(&self, node: &Self::Node) -> Result<Option<String>, DomError> {
+        Ok(match &node.inner.kind {
+            WebNodeKind::RawHtml(element) => Some(element.inner_html()),
+            WebNodeKind::Element(_)
+            | WebNodeKind::Text(_)
+            | WebNodeKind::Comment
+            | WebNodeKind::Other => None,
+        })
+    }
+
+    fn attributes(&self, node: &Self::Node) -> Result<Vec<(String, String)>, DomError> {
+        let element = node.element()?;
+        let mut attributes = Vec::new();
+
+        for name in element.get_attribute_names().iter() {
+            let Some(name) = name.as_string() else {
+                continue;
+            };
+
+            if let Some(value) = element.get_attribute(&name) {
+                attributes.push((name, value));
+            }
+        }
+
+        Ok(attributes)
     }
 
     fn append_child(&mut self, parent: &Self::Node, child: &Self::Node) -> Result<(), DomError> {

@@ -11,6 +11,8 @@ use std::error::Error;
 use std::fmt;
 
 use rusty_core::{AttributeValue, Element, HtmlElement};
+use rusty_hydrate::{HydrationError, HydrationSession};
+use rusty_vdom::HydrationId;
 
 /// An error encountered while serializing an element tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +39,46 @@ impl fmt::Display for RenderError {
 }
 
 impl Error for RenderError {}
+
+/// An error from rendering hydration markup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HydrationRenderError {
+    /// The element tree could not be serialized.
+    Render(RenderError),
+    /// Hydration state was unavailable for server rendering.
+    Protocol(HydrationError),
+}
+
+impl fmt::Display for HydrationRenderError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Render(error) => error.fmt(formatter),
+            Self::Protocol(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for HydrationRenderError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Render(error) => Some(error),
+            Self::Protocol(error) => Some(error),
+        }
+    }
+}
+
+impl From<RenderError> for HydrationRenderError {
+    fn from(error: RenderError) -> Self {
+        Self::Render(error)
+    }
+}
+
+impl From<HydrationError> for HydrationRenderError {
+    fn from(error: HydrationError) -> Self {
+        Self::Protocol(error)
+    }
+}
 
 /// Renders an element tree to an HTML string.
 ///
@@ -75,16 +117,101 @@ fn render_element(element: &Element, output: &mut String) -> Result<(), RenderEr
 }
 
 fn render_html(element: &HtmlElement, output: &mut String) -> Result<(), RenderError> {
-    let tag = element.tag();
+    validate_html(element)?;
+    write_open_tag(element, output);
 
-    if tag.is_void() && !element.children().is_empty() {
+    if !element.tag().is_void() {
+        for child in element.children() {
+            render_element(child, output)?;
+        }
+
+        write_close_tag(element, output);
+    }
+
+    Ok(())
+}
+
+/// Renders hydration markup with deterministic node markers.
+///
+/// The output must be placed inside the container that will be hydrated. Call
+/// [`HydrationSession::state_script`] separately and place the state script
+/// outside that container.
+///
+/// # Errors
+///
+/// Returns [`HydrationRenderError`] when the tree is invalid or the session is
+/// not a server session.
+pub fn render_hydrated(
+    element: &Element,
+    session: &HydrationSession,
+) -> Result<String, HydrationRenderError> {
+    if !session.is_server() {
+        return Err(HydrationError::NotServer.into());
+    }
+
+    let mut output = String::new();
+    let mut id = HydrationId::new(0);
+    render_hydration_element(element, &mut id, &mut output)?;
+    Ok(output)
+}
+
+fn render_hydration_element(
+    element: &Element,
+    id: &mut HydrationId,
+    output: &mut String,
+) -> Result<(), HydrationRenderError> {
+    match element {
+        Element::Html(html) => {
+            write_marker(id, output);
+            validate_html(html)?;
+            write_open_tag(html, output);
+
+            if !html.tag().is_void() {
+                for child in html.children() {
+                    render_hydration_element(child, id, output)?;
+                }
+
+                write_close_tag(html, output);
+            }
+        }
+        Element::Text(text) => {
+            write_marker(id, output);
+            escape_text_into(text, output);
+        }
+        Element::Fragment(children) => {
+            for child in children {
+                render_hydration_element(child, id, output)?;
+            }
+        }
+        Element::RawHtml(html) => {
+            write_marker(id, output);
+            output.push_str("<rusty-raw-html style=\"display: contents\">");
+            output.push_str(html);
+            output.push_str("</rusty-raw-html>");
+        }
+    }
+
+    Ok(())
+}
+
+fn write_marker(id: &mut HydrationId, output: &mut String) {
+    output.push_str(&id.marker());
+    *id = HydrationId::new(id.value() + 1);
+}
+
+fn validate_html(element: &HtmlElement) -> Result<(), RenderError> {
+    if element.tag().is_void() && !element.children().is_empty() {
         return Err(RenderError::VoidElementWithChildren {
-            tag: tag.as_str().to_owned(),
+            tag: element.tag().as_str().to_owned(),
         });
     }
 
+    Ok(())
+}
+
+fn write_open_tag(element: &HtmlElement, output: &mut String) {
     output.push('<');
-    output.push_str(tag.as_str());
+    output.push_str(element.tag().as_str());
 
     for attribute in element.attributes() {
         match attribute.value() {
@@ -104,18 +231,12 @@ fn render_html(element: &HtmlElement, output: &mut String) -> Result<(), RenderE
     }
 
     output.push('>');
+}
 
-    if !tag.is_void() {
-        for child in element.children() {
-            render_element(child, output)?;
-        }
-
-        output.push_str("</");
-        output.push_str(tag.as_str());
-        output.push('>');
-    }
-
-    Ok(())
+fn write_close_tag(element: &HtmlElement, output: &mut String) {
+    output.push_str("</");
+    output.push_str(element.tag().as_str());
+    output.push('>');
 }
 
 fn escape_text_into(value: &str, output: &mut String) {
@@ -262,6 +383,48 @@ mod tests {
         assert_eq!(
             render_to_string(&page).expect("rendering should succeed"),
             "<div><strong>trusted</strong></div>"
+        );
+    }
+
+    #[test]
+    fn renders_hydration_markers_and_raw_html_wrappers() {
+        let page = element(
+            "main",
+            vec![],
+            vec![
+                element("h1", vec![], vec![Element::text("Title")]),
+                Element::raw_html("<b>raw</b>"),
+            ],
+        );
+        let session = HydrationSession::server();
+
+        assert_eq!(
+            render_hydrated(&page, &session).expect("hydrate render"),
+            "<!--rusty:0--><main><!--rusty:1--><h1><!--rusty:2-->Title</h1><!--rusty:3--><rusty-raw-html style=\"display: contents\"><b>raw</b></rusty-raw-html></main>"
+        );
+    }
+
+    #[test]
+    fn hydrates_fragments_by_flattening_markers() {
+        let page = Element::fragment([
+            Element::text("a"),
+            element("div", vec![], vec![]),
+            Element::text("b"),
+        ]);
+        let session = HydrationSession::server();
+
+        assert_eq!(
+            render_hydrated(&page, &session).expect("hydrate render"),
+            "<!--rusty:0-->a<!--rusty:1--><div></div><!--rusty:2-->b"
+        );
+    }
+
+    #[test]
+    fn hydration_rendering_requires_a_server_session() {
+        let page = Element::text("hello");
+        assert_eq!(
+            render_hydrated(&page, &HydrationSession::client()),
+            Err(HydrationRenderError::Protocol(HydrationError::NotServer))
         );
     }
 

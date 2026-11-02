@@ -13,8 +13,14 @@ workspace = true
 [dependencies]
 rusty-core.workspace = true
 rusty-dom.workspace = true
+rusty-hydrate.workspace = true
 rusty-macros.workspace = true
 rusty-reactivity.workspace = true
 rusty-renderer.workspace = true
+rusty-router.workspace = true
+rusty-rpc.workspace = true
 rusty-ssr.workspace = true
 rusty-vdom.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rusty-server.workspace = true

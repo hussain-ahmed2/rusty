@@ -1,0 +1,15 @@
+[package]
+name = "rusty-router"
+description = "File-based routing and route manifests for Rusty"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

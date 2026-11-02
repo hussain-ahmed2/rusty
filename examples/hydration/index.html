@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rusty hydration</title>
+    <script id="__RUSTY_STATE__" type="application/json">{"count":5}</script>
+  </head>
+  <body>
+    <div id="app"><!--rusty:0--><main><!--rusty:1--><h1><!--rusty:2-->Rusty counter</h1><!--rusty:3--><button><!--rusty:4-->Increment</button><!--rusty:5--><p><!--rusty:6-->5</p></main></div>
+    <script type="module">
+      import init from "./pkg/hydration.js";
+      await init();
+
+      const paragraph = document.querySelector("#app p");
+      paragraph.dataset.node = "adopted";
+      document.querySelector("#app button").click();
+
+      const adopted = document.querySelector("#app p") === paragraph;
+      const markersRemoved = !document.querySelector("#app").innerHTML.includes("rusty:");
+      const text = paragraph.textContent;
+      document.body.dataset.result =
+        adopted && markersRemoved && text === "6" ? "pass" : "fail";
+    </script>
+  </body>
+</html>

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use rusty_core::{is_void_element, AttributeValue, Event, EventListener, EventName};
 
-use crate::{Dom, DomError};
+use crate::{Dom, DomError, NodeKind};
 
 /// A handle to a node in a [`MockDom`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -32,6 +32,7 @@ enum MockNodeKind {
         children: Vec<MockNode>,
     },
     Text(String),
+    Comment(String),
     RawHtml(String),
 }
 
@@ -83,6 +84,15 @@ impl MockDom {
     pub fn raw_html(&self, node: &MockNode) -> Option<String> {
         match &self.data(*node).kind {
             MockNodeKind::RawHtml(html) => Some(html.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns the content of a comment node.
+    #[must_use]
+    pub fn comment(&self, node: &MockNode) -> Option<String> {
+        match &self.data(*node).kind {
+            MockNodeKind::Comment(text) => Some(text.clone()),
             _ => None,
         }
     }
@@ -234,6 +244,11 @@ impl MockDom {
                 }
             }
             MockNodeKind::Text(text) => escape_text_into(text, output),
+            MockNodeKind::Comment(text) => {
+                output.push_str("<!--");
+                output.push_str(text);
+                output.push_str("-->");
+            }
             MockNodeKind::RawHtml(html) => output.push_str(html),
         }
     }
@@ -257,6 +272,69 @@ impl Dom for MockDom {
 
     fn create_raw_html(&mut self, html: &str) -> Result<Self::Node, DomError> {
         Ok(self.create_node(MockNodeKind::RawHtml(html.to_owned())))
+    }
+
+    fn create_comment(&mut self, text: &str) -> Result<Self::Node, DomError> {
+        Ok(self.create_node(MockNodeKind::Comment(text.to_owned())))
+    }
+
+    fn first_child(&self, parent: &Self::Node) -> Result<Option<Self::Node>, DomError> {
+        Ok(self
+            .children(parent)
+            .and_then(|children| children.first().copied()))
+    }
+
+    fn next_sibling(&self, node: &Self::Node) -> Result<Option<Self::Node>, DomError> {
+        let Some(parent) = self.parent(node) else {
+            return Ok(None);
+        };
+        let Some(children) = self.children(&parent) else {
+            return Ok(None);
+        };
+        let Some(index) = children.iter().position(|child| child == node) else {
+            return Ok(None);
+        };
+        Ok(children.get(index + 1).copied())
+    }
+
+    fn node_kind(&self, node: &Self::Node) -> Result<NodeKind, DomError> {
+        Ok(match &self.data(*node).kind {
+            MockNodeKind::Element { .. } => NodeKind::Element,
+            MockNodeKind::Text(_) => NodeKind::Text,
+            MockNodeKind::Comment(_) => NodeKind::Comment,
+            MockNodeKind::RawHtml(_) => NodeKind::RawHtml,
+        })
+    }
+
+    fn tag_name(&self, node: &Self::Node) -> Result<Option<String>, DomError> {
+        Ok(self.tag(node))
+    }
+
+    fn text(&self, node: &Self::Node) -> Result<Option<String>, DomError> {
+        Ok(self.text(node))
+    }
+
+    fn comment(&self, node: &Self::Node) -> Result<Option<String>, DomError> {
+        Ok(self.comment(node))
+    }
+
+    fn raw_html(&self, node: &Self::Node) -> Result<Option<String>, DomError> {
+        Ok(self.raw_html(node))
+    }
+
+    fn attributes(&self, node: &Self::Node) -> Result<Vec<(String, String)>, DomError> {
+        let Some(attributes) = self.attributes(node) else {
+            return Ok(Vec::new());
+        };
+
+        Ok(attributes
+            .into_iter()
+            .filter_map(|(name, value)| match value {
+                AttributeValue::Text(value) => Some((name, value)),
+                AttributeValue::Bool(true) => Some((name, String::new())),
+                AttributeValue::Bool(false) | AttributeValue::None => None,
+            })
+            .collect())
     }
 
     fn append_child(&mut self, parent: &Self::Node, child: &Self::Node) -> Result<(), DomError> {

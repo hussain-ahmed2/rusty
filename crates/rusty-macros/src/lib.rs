@@ -1,7 +1,8 @@
 //! Procedural macros for the Rusty framework.
 //!
-//! Provides [`view!`] for JSX-like element construction and [`component`] for
-//! transforming a function into a typed component.
+//! Provides [`view!`] for JSX-like element construction, [`component`] for
+//! transforming a function into a typed component, and [`server`] for typed
+//! server functions.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -10,6 +11,7 @@ mod ast;
 mod codegen;
 mod component;
 mod parser;
+mod server;
 
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
@@ -85,4 +87,32 @@ pub fn component(attributes: TokenStream, item: TokenStream) -> TokenStream {
     component::expand(function)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+/// Marks a function as a typed server function.
+///
+/// The function must be synchronous, non-generic, return
+/// `Result<T, RpcError>`, and take serializable arguments. The macro generates
+/// a hidden marker type implementing `ServerFunction` (and `ServerInvoker` on
+/// native targets) plus a WebAssembly client stub with the same signature.
+///
+/// The default path is `/_rusty/rpc/<function_name>`. Pass a literal to
+/// override it:
+///
+/// ```rust,ignore
+/// use rusty::prelude::*;
+///
+/// #[server]
+/// pub fn add(left: i32, right: i32) -> Result<i32, RpcError> {
+///     Ok(left + right)
+/// }
+///
+/// #[server("/api/health")]
+/// pub fn health() -> Result<String, RpcError> {
+///     Ok("ok".to_owned())
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn server(attributes: TokenStream, item: TokenStream) -> TokenStream {
+    server::expand(attributes.into(), item.into()).into()
 }

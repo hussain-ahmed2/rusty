@@ -1,0 +1,19 @@
+[package]
+name = "hydration"
+description = "SSR hydration example for Rusty"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rusty.workspace = true
+wasm-bindgen.workspace = true
