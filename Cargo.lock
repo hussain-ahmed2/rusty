@@ -28,11 +28,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "reactivity"
+version = "0.1.0"
+dependencies = [
+ "rusty",
+]
+
+[[package]]
 name = "rusty"
 version = "0.1.0"
 dependencies = [
  "rusty-core",
  "rusty-macros",
+ "rusty-reactivity",
  "rusty-ssr",
 ]
 
@@ -48,6 +56,13 @@ dependencies = [
  "quote",
  "rusty-core",
  "syn",
+]
+
+[[package]]
+name = "rusty-reactivity"
+version = "0.1.0"
+dependencies = [
+ "rusty-core",
 ]
 
 [[package]]

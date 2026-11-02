@@ -4,8 +4,10 @@ members = [
     "crates/rusty",
     "crates/rusty-core",
     "crates/rusty-macros",
+    "crates/rusty-reactivity",
     "crates/rusty-ssr",
     "examples/hello-world",
+    "examples/reactivity",
 ]
 
 [workspace.package]
@@ -19,6 +21,7 @@ authors = ["Rusty contributors"]
 rusty = { path = "crates/rusty", version = "0.1.0" }
 rusty-core = { path = "crates/rusty-core", version = "0.1.0" }
 rusty-macros = { path = "crates/rusty-macros", version = "0.1.0" }
+rusty-reactivity = { path = "crates/rusty-reactivity", version = "0.1.0" }
 rusty-ssr = { path = "crates/rusty-ssr", version = "0.1.0" }
 
 proc-macro2 = "1.0"

@@ -77,7 +77,7 @@ remain immediately recognizable.
 
 ## Milestones
 
-**Status:** Milestone 2 complete. Next: Milestone 3 — reactivity.
+**Status:** Milestone 3 complete. Next: Milestone 4 — browser runtime.
 
 ### Milestone 1 — Foundation (complete)
 
@@ -125,10 +125,23 @@ Deliverables:
 Explicit non-goals for M2: reactive updates, event handlers, generic or async
 components, browser rendering, hydration, and lifecycle hooks.
 
-### Milestone 3 — Reactivity
+### Milestone 3 — Reactivity (complete)
 
-Signals, memos, effects, dependency tracking, batching, context, lifecycle, and
-cleanup with a cycle-safe ownership model.
+Deliverables:
+
+- `Signal<T>` for reactive state.
+- `Memo<T>` for lazy derived values with cached recomputation.
+- `Effect` for tracked side effects with cleanup and disposal.
+- Automatic dependency tracking with dynamic dependency sets.
+- `batch` for coalescing notifications and `untrack` for untracked reads.
+- An owner tree with weak parent links and strong child ownership, providing
+  cycle-safe lifecycle cleanup.
+- Context propagation through owner scopes.
+- Reactive values render their current value in `view!` and HTML attributes.
+
+Explicit non-goals for M3: browser DOM patching, event handlers, hydration,
+async effects, and multi-threaded reactive state. Reactive values are updated in
+memory; DOM updates arrive in M4.
 
 ### Milestone 4 — Browser runtime
 
@@ -364,6 +377,70 @@ Function attributes are preserved. `#[cfg]` and `#[cfg_attr]` apply to both the
 generated struct and its `Component` impl, while `#[inline]`, `#[cold]`,
 `#[track_caller]`, and lint attributes also apply to the generated `render`
 method.
+
+## Milestone 3 architecture
+
+### Runtime and ownership
+
+The reactivity runtime is thread-local. Signals are `Rc`-backed and intentionally
+not `Send` or `Sync`; all reactive work runs on the thread that created the
+value. This keeps dependency tracking and scheduling deterministic without locks
+or `unsafe` code.
+
+Owners form a disposal tree:
+
+- an owner holds strong references to its children and disposables,
+- each child holds a weak reference to its parent,
+- dropping or disposing an owner recursively disposes children, effects, and
+  cleanups,
+- dropping a child detaches it from its parent.
+
+Weak parent links are what make the ownership graph cycle-safe. Effects are
+owned by the current owner and can also be disposed early through their handle.
+Effects created outside an explicit `create_root` attach to a thread-local root
+that lives for the rest of the thread.
+
+### Signals, memos, and effects
+
+`Signal<T>` stores a value and a set of weakly held subscribers. Reads record the
+current observer as a dependency; writes notify subscribers. `set` always
+notifies, while `set_if_changed` and `update` suppress notifications when the
+value is unchanged.
+
+`Memo<T>` is a lazy derived value. It records its own dependencies, caches its
+value, and becomes dirty when a dependency changes. Recomputation happens on the
+next read. Re-entering a memo while it is computing is a dependency cycle and
+panics with a clear diagnostic.
+
+`Effect` runs immediately, clears its previous dependency set before each run,
+and reruns when a dependency changes. Effects can register cleanup with
+`on_cleanup`; cleanups run before reruns and on disposal. A callback that
+unconditionally writes a signal it reads intentionally schedules another run and
+must be avoided.
+
+### Scheduling and batching
+
+Writes enqueue affected effects in a runtime queue. Queued effects are
+deduplicated by runtime-assigned subscriber identity and run in FIFO scheduling
+order. `batch` defers effect execution until the outermost batch completes.
+Effects created or triggered during a run are queued safely instead of being
+executed reentrantly. Disposing an effect cancels its queued work.
+
+`untrack` suppresses dependency recording for the current computation depth while
+still allowing nested memos and effects to track their own reads. Writes made
+inside `untrack` are flushed after the untracked scope ends, so rerun effects
+record dependencies normally. Borrowed reads through `Signal::with` and
+`Memo::with` likewise defer effect flushing until the borrow ends.
+
+### Rendering integration
+
+`Signal<T>` and `Memo<T>` implement `IntoElement` and `IntoAttributeValue` when
+`T` can be rendered. `view!` therefore displays the current value during the
+initial render. Subscriptions become live once the browser runtime renders inside
+a reactive effect in M4.
+
+Limitations are explicit: reactive state is single-threaded, effects are
+synchronous, and there is no batching timer or scheduler abstraction yet.
 
 ## Definition of done for each milestone
 

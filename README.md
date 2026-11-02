@@ -7,23 +7,23 @@ the file-system conventions and component mental model familiar while using Rust
 for components, server code, and the browser runtime.
 
 Rusty is built incrementally. The current milestone provides typed components,
-props, children, dynamic expressions, conditionals, iteration, and safe
-server-side HTML rendering.
+props, children, dynamic expressions, conditionals, iteration, safe server-side
+HTML rendering, and fine-grained reactive state.
 
 ## Status
 
-**Milestone 2 — Component system (complete)**
+**Milestone 3 — Reactivity (complete)**
 
-- [x] Component types generated from ordinary Rust functions
-- [x] Typed props with compile-time checking
-- [x] Children passed through `Children`
-- [x] Dynamic text and attribute expressions
-- [x] `{#if}` / `{:else if}` / `{:else}` conditionals
-- [x] `{#each}` iteration with destructuring
-- [x] Component composition
-- [x] Safe escaping and validated HTML names
+- [x] Signals, memos, and effects
+- [x] Automatic dependency tracking
+- [x] Batched updates and `untrack`
+- [x] Cycle-safe ownership with deterministic cleanup
+- [x] Context propagation through owner scopes
+- [x] Reactive values render their current value in views
 
-Next up: Milestone 3 (reactivity). Not yet implemented: signals, browser runtime,
+Milestone 2 also provides generated component types, typed props, children,
+dynamic expressions, conditionals, iteration, and safe escaping. Next up:
+Milestone 4 (browser runtime). Not yet implemented: browser DOM updates,
 hydration, routing, server functions, compiler, and CLI. See
 [docs/PLAN.md](docs/PLAN.md) for the full roadmap and engineering rules.
 
@@ -32,12 +32,22 @@ hydration, routing, server functions, compiler, and CLI. See
 ```bash
 cargo test --workspace
 cargo run -p hello-world
+cargo run -p reactivity
 ```
 
-Expected output:
+Expected `hello-world` output:
 
 ```html
 <main class="app"><h1>Hello from Rusty</h1><p>A Next.js-inspired framework built with Rust.</p><ul><li>Components</li><li>Typed props</li><li>Children</li><li>Conditionals</li><li>Iteration</li></ul></main>
+```
+
+Expected `reactivity` output:
+
+```text
+doubled: 2
+doubled: 6
+<main><h1>Rusty reactivity</h1><p>count = 3</p><p>doubled = 6</p></main>
+doubled: 8
 ```
 
 ## Example
@@ -86,6 +96,7 @@ pass nested content as `children`, even when the body is empty.
 | `rusty-core` | Element model, components, children, conversions |
 | `rusty-macros` | `view!` and `#[component]` procedural macros |
 | `rusty-ssr` | Server-side HTML rendering |
+| `rusty-reactivity` | Signals, memos, effects, ownership, and scheduling |
 
 ## Project conventions
 

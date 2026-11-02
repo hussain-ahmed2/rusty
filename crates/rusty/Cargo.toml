@@ -13,4 +13,5 @@ workspace = true
 [dependencies]
 rusty-core.workspace = true
 rusty-macros.workspace = true
+rusty-reactivity.workspace = true
 rusty-ssr.workspace = true
