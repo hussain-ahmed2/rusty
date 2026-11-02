@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rusty",
+    "crates/rusty-core",
+    "crates/rusty-macros",
+    "crates/rusty-ssr",
+    "examples/hello-world",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+authors = ["Rusty contributors"]
+
+[workspace.dependencies]
+rusty = { path = "crates/rusty", version = "0.1.0" }
+rusty-core = { path = "crates/rusty-core", version = "0.1.0" }
+rusty-macros = { path = "crates/rusty-macros", version = "0.1.0" }
+rusty-ssr = { path = "crates/rusty-ssr", version = "0.1.0" }
+
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = "2.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+all = "deny"
