@@ -3,9 +3,13 @@ resolver = "2"
 members = [
     "crates/rusty",
     "crates/rusty-core",
+    "crates/rusty-dom",
     "crates/rusty-macros",
     "crates/rusty-reactivity",
+    "crates/rusty-renderer",
+    "crates/rusty-vdom",
     "crates/rusty-ssr",
+    "examples/browser",
     "examples/hello-world",
     "examples/reactivity",
 ]
@@ -20,13 +24,31 @@ authors = ["Rusty contributors"]
 [workspace.dependencies]
 rusty = { path = "crates/rusty", version = "0.1.0" }
 rusty-core = { path = "crates/rusty-core", version = "0.1.0" }
+rusty-dom = { path = "crates/rusty-dom", version = "0.1.0" }
 rusty-macros = { path = "crates/rusty-macros", version = "0.1.0" }
 rusty-reactivity = { path = "crates/rusty-reactivity", version = "0.1.0" }
+rusty-renderer = { path = "crates/rusty-renderer", version = "0.1.0" }
+rusty-vdom = { path = "crates/rusty-vdom", version = "0.1.0" }
 rusty-ssr = { path = "crates/rusty-ssr", version = "0.1.0" }
 
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlElement",
+    "HtmlInputElement",
+    "HtmlTextAreaElement",
+    "KeyboardEvent",
+    "Node",
+    "Text",
+    "Window",
+] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

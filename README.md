@@ -8,24 +8,25 @@ for components, server code, and the browser runtime.
 
 Rusty is built incrementally. The current milestone provides typed components,
 props, children, dynamic expressions, conditionals, iteration, safe server-side
-HTML rendering, and fine-grained reactive state.
+HTML rendering, fine-grained reactive state, and a browser runtime that patches
+DOM nodes in place.
 
 ## Status
 
-**Milestone 3 — Reactivity (complete)**
+**Milestone 4 — Browser runtime (complete)**
 
-- [x] Signals, memos, and effects
-- [x] Automatic dependency tracking
-- [x] Batched updates and `untrack`
-- [x] Cycle-safe ownership with deterministic cleanup
-- [x] Context propagation through owner scopes
-- [x] Reactive values render their current value in views
+- [x] `Dom` abstraction with native `MockDom` and WebAssembly `WebDom`
+- [x] Virtual node snapshots and void-element validation
+- [x] Client renderer with in-place attribute, text, raw HTML, and listener patching
+- [x] `on:click={handler}` event syntax
+- [x] Reactive roots that rerender views through effects
+- [x] Browser counter example compiled for `wasm32-unknown-unknown`
 
-Milestone 2 also provides generated component types, typed props, children,
-dynamic expressions, conditionals, iteration, and safe escaping. Next up:
-Milestone 4 (browser runtime). Not yet implemented: browser DOM updates,
-hydration, routing, server functions, compiler, and CLI. See
-[docs/PLAN.md](docs/PLAN.md) for the full roadmap and engineering rules.
+Milestones 1–3 also provide the `view!` macro, typed components, safe escaping,
+signals, memos, effects, ownership, and context. Next up: Milestone 5 (SSR and
+hydration). Not yet implemented: hydration, keyed list diffing, routing, server
+functions, compiler, and CLI. See [docs/PLAN.md](docs/PLAN.md) for the full
+roadmap and engineering rules.
 
 ## Quick start
 
@@ -33,6 +34,8 @@ hydration, routing, server functions, compiler, and CLI. See
 cargo test --workspace
 cargo run -p hello-world
 cargo run -p reactivity
+rustup target add wasm32-unknown-unknown
+cargo build -p browser --target wasm32-unknown-unknown
 ```
 
 Expected `hello-world` output:
@@ -49,6 +52,12 @@ doubled: 6
 <main><h1>Rusty reactivity</h1><p>count = 3</p><p>doubled = 6</p></main>
 doubled: 8
 ```
+
+The browser example is a counter with an `on:click` handler. From
+`examples/browser`, run `wasm-pack build --target web` and serve the directory.
+Opening `index.html` mounts the counter into the document body. Keep the
+`ReactiveRoot` alive for the lifetime of the page; dropping it disposes the
+render effect and removes the mounted nodes.
 
 ## Example
 
@@ -97,6 +106,9 @@ pass nested content as `children`, even when the body is empty.
 | `rusty-macros` | `view!` and `#[component]` procedural macros |
 | `rusty-ssr` | Server-side HTML rendering |
 | `rusty-reactivity` | Signals, memos, effects, ownership, and scheduling |
+| `rusty-vdom` | Virtual node snapshots for client rendering |
+| `rusty-dom` | DOM abstraction with mock and browser backends |
+| `rusty-renderer` | Client mounting, patching, and reactive roots |
 
 ## Project conventions
 

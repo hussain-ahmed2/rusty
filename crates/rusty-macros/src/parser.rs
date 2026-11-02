@@ -11,8 +11,8 @@ use syn::parse::{Parse, ParseStream};
 use syn::{braced, token, Expr, Ident, LitStr, Pat, Token};
 
 use crate::ast::{
-    Attribute, AttributeValue, ComponentElement, EachNode, HtmlElement, IfBranch, IfNode, Name,
-    Node, View,
+    Attribute, AttributeValue, ComponentElement, EachNode, Event, HtmlElement, IfBranch, IfNode,
+    Name, Node, View,
 };
 
 impl Parse for View {
@@ -94,6 +94,9 @@ fn parse_element(input: ParseStream<'_>) -> syn::Result<Node> {
     }
 
     let mut attributes = Vec::new();
+    let mut events = Vec::new();
+    let mut seen_names = Vec::new();
+
     while !input.peek(Token![>]) && !input.peek(Token![/]) {
         let attribute = parse_attribute(input)?;
 
@@ -104,14 +107,22 @@ fn parse_element(input: ParseStream<'_>) -> syn::Result<Node> {
             ));
         }
 
-        if attributes
+        if seen_names
             .iter()
-            .any(|existing: &Attribute| existing.name.value == attribute.name.value)
+            .any(|name: &String| name == &attribute.name.value)
         {
             return Err(syn::Error::new(
                 attribute.name.span,
                 format!("duplicate attribute `{}`", attribute.name.value),
             ));
+        }
+        seen_names.push(attribute.name.value.clone());
+
+        if !is_component {
+            if let Some(event_name) = attribute.name.value.strip_prefix("on:") {
+                events.push(parse_event(&attribute, event_name)?);
+                continue;
+            }
         }
 
         attributes.push(attribute);
@@ -132,6 +143,7 @@ fn parse_element(input: ParseStream<'_>) -> syn::Result<Node> {
             Node::Element(HtmlElement {
                 tag,
                 attributes,
+                events,
                 children: Vec::new(),
             })
         });
@@ -143,6 +155,7 @@ fn parse_element(input: ParseStream<'_>) -> syn::Result<Node> {
         return Ok(Node::Element(HtmlElement {
             tag,
             attributes,
+            events,
             children: Vec::new(),
         }));
     }
@@ -170,6 +183,7 @@ fn parse_element(input: ParseStream<'_>) -> syn::Result<Node> {
         Ok(Node::Element(HtmlElement {
             tag,
             attributes,
+            events,
             children,
         }))
     }
@@ -212,6 +226,28 @@ fn parse_closing_tag(input: ParseStream<'_>) -> syn::Result<Name> {
     let name = parse_tag_name(input)?;
     input.parse::<Token![>]>()?;
     Ok(name)
+}
+
+fn parse_event(attribute: &Attribute, event_name: &str) -> syn::Result<Event> {
+    rusty_core::EventName::new(event_name)
+        .map_err(|error| syn::Error::new(attribute.name.span, error.to_string()))?;
+
+    let AttributeValue::Dynamic(handler) = &attribute.value else {
+        return Err(syn::Error::new(
+            attribute.name.span,
+            "event listeners require a `{ handler }` expression",
+        ));
+    };
+
+    Ok(Event {
+        name: Name {
+            value: event_name.to_owned(),
+            ident: attribute.name.ident.clone(),
+            has_separators: false,
+            span: attribute.name.span,
+        },
+        handler: handler.clone(),
+    })
 }
 
 fn parse_attribute(input: ParseStream<'_>) -> syn::Result<Attribute> {
@@ -720,6 +756,41 @@ mod tests {
         assert_eq!(div.children.len(), 2);
         assert!(matches!(&div.children[0], Node::Element(br) if br.tag.value == "br"));
         assert!(matches!(&div.children[1], Node::Text(_)));
+    }
+
+    #[test]
+    fn parses_event_listeners_separately_from_attributes() {
+        let view = parse(r#"<button class="primary" on:click={save}>"Save"</button>"#)
+            .expect("view should parse");
+        let Node::Element(button) = &view.nodes[0] else {
+            panic!("expected a button");
+        };
+
+        assert_eq!(button.attributes.len(), 1);
+        assert_eq!(button.events.len(), 1);
+        assert_eq!(button.events[0].name.value, "click");
+        assert!(matches!(
+            button.attributes[0].value,
+            AttributeValue::Text(_)
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_events_and_non_expression_handlers() {
+        let invalid = parse(r#"<button on:click:foo={handler} />"#)
+            .err()
+            .expect("event name must be validated");
+        assert!(
+            invalid.to_string().contains("invalid HTML event name"),
+            "{invalid}"
+        );
+
+        let non_expression = parse(r#"<button on:click="save" />"#)
+            .err()
+            .expect("event handlers must be expressions");
+        assert!(non_expression
+            .to_string()
+            .contains("require a `{ handler }` expression"));
     }
 
     #[test]

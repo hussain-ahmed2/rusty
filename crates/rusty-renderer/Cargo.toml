@@ -1,0 +1,17 @@
+[package]
+name = "rusty-renderer"
+description = "Client-side DOM renderer and patching engine for Rusty"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rusty-core.workspace = true
+rusty-dom.workspace = true
+rusty-reactivity.workspace = true
+rusty-vdom.workspace = true

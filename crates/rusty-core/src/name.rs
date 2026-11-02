@@ -14,6 +14,8 @@ pub enum NameKind {
     Tag,
     /// An HTML attribute name, such as `class`, `data-id`, or `xlink:href`.
     Attribute,
+    /// A DOM event name, such as `click`, `input`, or `keydown`.
+    Event,
 }
 
 impl NameKind {
@@ -21,6 +23,7 @@ impl NameKind {
         match self {
             Self::Tag => "tag",
             Self::Attribute => "attribute",
+            Self::Event => "event",
         }
     }
 }
@@ -139,6 +142,64 @@ impl TryFrom<String> for TagName {
     }
 }
 
+/// A validated DOM event name.
+///
+/// Event names are separate from attribute names so `view!` can distinguish
+/// `on:click` listeners from ordinary attributes. Names allow ASCII letters,
+/// digits, `-`, and `_`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EventName(String);
+
+impl EventName {
+    /// Validates and constructs an event name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidName`] when the name is empty, does not start with an
+    /// ASCII letter, or contains an unsupported character.
+    pub fn new(name: impl Into<String>) -> Result<Self, InvalidName> {
+        let name = name.into();
+        match validate_event_name(&name) {
+            Ok(()) => Ok(Self(name)),
+            Err(reason) => Err(InvalidName::new(NameKind::Event, name, reason)),
+        }
+    }
+
+    /// Returns the name as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for EventName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl AsRef<str> for EventName {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl TryFrom<&str> for EventName {
+    type Error = InvalidName;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<String> for EventName {
+    type Error = InvalidName;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
 /// A validated HTML attribute name.
 ///
 /// Attribute names allow letters, digits, `-`, `_`, `.`, and `:` so that common
@@ -215,6 +276,25 @@ fn validate_tag_name(name: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+fn validate_event_name(name: &str) -> Result<(), &'static str> {
+    let Some(first) = name.chars().next() else {
+        return Err("the name must not be empty");
+    };
+
+    if !first.is_ascii_alphabetic() {
+        return Err("the name must start with an ASCII letter");
+    }
+
+    if !name
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err("the name may contain only ASCII letters, digits, '-', and '_'");
+    }
+
+    Ok(())
+}
+
 fn validate_attribute_name(name: &str) -> Result<(), &'static str> {
     let Some(first) = name.chars().next() else {
         return Err("the name must not be empty");
@@ -283,6 +363,23 @@ mod tests {
                 AttributeName::new(name).is_err(),
                 "{name:?} should be invalid"
             );
+        }
+    }
+
+    #[test]
+    fn accepts_event_names() {
+        for name in ["click", "input", "keydown", "pointerdown", "my-event"] {
+            assert!(
+                EventName::new(name).is_ok(),
+                "{name} should be a valid event"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_event_names() {
+        for name in ["", "1click", "click space", "click:extra", "click>"] {
+            assert!(EventName::new(name).is_err(), "{name:?} should be invalid");
         }
     }
 

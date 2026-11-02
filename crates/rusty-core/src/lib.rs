@@ -11,13 +11,15 @@ mod children;
 mod component;
 mod convert;
 mod element;
+mod event;
 mod name;
 
 pub use children::Children;
 pub use component::Component;
 pub use convert::{fragment_from_iter, IntoAttributeValue, IntoElement};
 pub use element::{Attribute, AttributeValue, Element, HtmlElement};
-pub use name::{AttributeName, InvalidName, NameKind, TagName};
+pub use event::{Event, EventListener};
+pub use name::{AttributeName, EventName, InvalidName, NameKind, TagName};
 
 /// HTML elements that must not have children or an explicit closing tag.
 ///

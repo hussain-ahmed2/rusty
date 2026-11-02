@@ -9,7 +9,7 @@ use quote::quote;
 use syn::LitStr;
 
 use crate::ast::{
-    Attribute, AttributeValue, ComponentElement, EachNode, HtmlElement, IfNode, Node, View,
+    Attribute, AttributeValue, ComponentElement, EachNode, Event, HtmlElement, IfNode, Node, View,
 };
 
 /// Expands a parsed view into a Rust expression that produces an `Element`.
@@ -59,12 +59,33 @@ fn element_tokens(element: &HtmlElement) -> TokenStream {
     let attributes = element.attributes.iter().map(html_attribute_tokens);
     let children = element.children.iter().map(node_tokens);
 
+    if element.events.is_empty() {
+        quote! {
+            ::rusty::__private::element(
+                #tag,
+                ::std::vec![#(#attributes),*],
+                ::std::vec![#(#children),*],
+            )
+        }
+    } else {
+        let events = element.events.iter().map(event_tokens);
+        quote! {
+            ::rusty::__private::element_with_events(
+                #tag,
+                ::std::vec![#(#attributes),*],
+                ::std::vec![#(#children),*],
+                ::std::vec![#(#events),*],
+            )
+        }
+    }
+}
+
+fn event_tokens(event: &Event) -> TokenStream {
+    let name = LitStr::new(&event.name.value, event.name.span);
+    let handler = &event.handler;
+
     quote! {
-        ::rusty::__private::element(
-            #tag,
-            ::std::vec![#(#attributes),*],
-            ::std::vec![#(#children),*],
-        )
+        ::rusty::__private::event_listener(#name, #handler)
     }
 }
 

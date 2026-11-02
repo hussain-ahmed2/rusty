@@ -12,6 +12,9 @@ workspace = true
 
 [dependencies]
 rusty-core.workspace = true
+rusty-dom.workspace = true
 rusty-macros.workspace = true
 rusty-reactivity.workspace = true
+rusty-renderer.workspace = true
 rusty-ssr.workspace = true
+rusty-vdom.workspace = true

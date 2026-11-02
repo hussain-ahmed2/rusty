@@ -4,7 +4,7 @@
 //! will be layered on top in later milestones; keeping the foundation owned
 //! avoids shared mutable state and reference cycles.
 
-use crate::{AttributeName, TagName};
+use crate::{AttributeName, EventListener, TagName};
 
 /// A node in a Rusty render tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +50,17 @@ impl Element {
     pub fn html(tag: TagName, attributes: Vec<Attribute>, children: Vec<Self>) -> Self {
         Self::Html(HtmlElement::new(tag, attributes, children))
     }
+
+    /// Creates an HTML element node with client-side event listeners.
+    #[must_use]
+    pub fn html_with_events(
+        tag: TagName,
+        attributes: Vec<Attribute>,
+        children: Vec<Self>,
+        listeners: Vec<EventListener>,
+    ) -> Self {
+        Self::Html(HtmlElement::new(tag, attributes, children).with_listeners(listeners))
+    }
 }
 
 /// An HTML element with a validated tag name.
@@ -58,6 +69,7 @@ pub struct HtmlElement {
     tag: TagName,
     attributes: Vec<Attribute>,
     children: Vec<Element>,
+    listeners: Vec<EventListener>,
 }
 
 impl HtmlElement {
@@ -70,7 +82,17 @@ impl HtmlElement {
             tag,
             attributes,
             children,
+            listeners: Vec::new(),
         }
+    }
+
+    /// Attaches client-side event listeners.
+    ///
+    /// Listeners are ignored by server-side rendering.
+    #[must_use]
+    pub fn with_listeners(mut self, listeners: Vec<EventListener>) -> Self {
+        self.listeners = listeners;
+        self
     }
 
     /// Returns the validated tag name.
@@ -89,6 +111,12 @@ impl HtmlElement {
     #[must_use]
     pub fn children(&self) -> &[Element] {
         &self.children
+    }
+
+    /// Returns the client-side event listeners in declaration order.
+    #[must_use]
+    pub fn listeners(&self) -> &[EventListener] {
+        &self.listeners
     }
 }
 

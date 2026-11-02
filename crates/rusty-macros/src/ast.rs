@@ -34,6 +34,8 @@ pub(crate) struct HtmlElement {
     pub(crate) tag: Name,
     /// Attributes in declaration order.
     pub(crate) attributes: Vec<Attribute>,
+    /// Client-side event listeners in declaration order.
+    pub(crate) events: Vec<Event>,
     /// Child nodes in render order.
     pub(crate) children: Vec<Node>,
 }
@@ -56,6 +58,14 @@ pub(crate) struct Attribute {
     pub(crate) name: Name,
     /// The attribute value.
     pub(crate) value: AttributeValue,
+}
+
+/// An event listener written as `on:name={handler}`.
+pub(crate) struct Event {
+    /// The validated event name, without the `on:` prefix.
+    pub(crate) name: Name,
+    /// The handler expression.
+    pub(crate) handler: Expr,
 }
 
 /// The value of a parsed attribute.

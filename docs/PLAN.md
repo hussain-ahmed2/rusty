@@ -62,9 +62,9 @@ remain immediately recognizable.
 | `rusty-macros` | `view!`, component and server macros | M1 (`view!`), M2 (`#[component]`) |
 | `rusty-ssr` | Server-side HTML rendering | M1 |
 | `rusty-reactivity` | Signals, memos, effects, scheduling | M3 |
-| `rusty-vdom` | Initial render representation (not the update engine) | M4 |
+| `rusty-vdom` | Virtual node snapshots for client rendering | M4 |
 | `rusty-dom` | Browser DOM abstraction | M4 |
-| `rusty-renderer` | Rendering abstractions | M4 |
+| `rusty-renderer` | Client mounting, patching, and reactive roots | M4 |
 | `rusty-hydrate` | Serialization protocol and hydration | M5 |
 | `rusty-router` | File-based routing and route manifests | M6 |
 | `rusty-server` | HTTP runtime, middleware, request context | M7 |
@@ -77,7 +77,7 @@ remain immediately recognizable.
 
 ## Milestones
 
-**Status:** Milestone 3 complete. Next: Milestone 4 — browser runtime.
+**Status:** Milestone 4 complete. Next: Milestone 5 — SSR and hydration.
 
 ### Milestone 1 — Foundation (complete)
 
@@ -143,10 +143,24 @@ Explicit non-goals for M3: browser DOM patching, event handlers, hydration,
 async effects, and multi-threaded reactive state. Reactive values are updated in
 memory; DOM updates arrive in M4.
 
-### Milestone 4 — Browser runtime
+### Milestone 4 — Browser runtime (complete)
 
-WebAssembly target, DOM abstraction, client rendering, event handling, and
-fine-grained DOM updates.
+Deliverables:
+
+- `wasm32-unknown-unknown` support for the core crates, renderer, facade, and
+  browser example.
+- A `Dom` trait covering element, text, raw HTML, attribute, child, and event
+  operations.
+- `MockDom` for deterministic native tests and `WebDom` backed by `web-sys`.
+- `rusty-vdom` snapshots converted from the owned `Element` tree.
+- A renderer that mounts a tree and patches attributes, text, raw HTML,
+  listeners, and children in place.
+- `on:name={handler}` event syntax and browser-independent `Event` values.
+- Reactive roots that run views inside effects and keep node identity stable.
+- A browser counter example with an `on:click` handler.
+
+Explicit non-goals for M4: hydration, keyed list diffing, event delegation,
+event modifiers, async effects, routing, and server functions.
 
 ### Milestone 5 — SSR and hydration
 
@@ -435,12 +449,104 @@ record dependencies normally. Borrowed reads through `Signal::with` and
 ### Rendering integration
 
 `Signal<T>` and `Memo<T>` implement `IntoElement` and `IntoAttributeValue` when
-`T` can be rendered. `view!` therefore displays the current value during the
-initial render. Subscriptions become live once the browser runtime renders inside
-a reactive effect in M4.
+`T` can be rendered. `view!` displays the current value during rendering. The M4
+client runtime runs the view function inside an effect, so subscriptions become
+live when the tree is mounted.
 
 Limitations are explicit: reactive state is single-threaded, effects are
 synchronous, and there is no batching timer or scheduler abstraction yet.
+
+## Milestone 4 architecture
+
+### Event model
+
+Events are a distinct part of an HTML element, not attributes:
+
+```rust
+view! {
+    <button on:click={move |_| count.set(count.get() + 1)}>
+        {count}
+    </button>
+}
+```
+
+The parser strips the `on:` prefix and validates the remaining name with
+`EventName`. Event names must start with an ASCII letter and may contain only
+letters, digits, `-`, and `_`. Handlers must be `{ ... }` expressions and are
+stored as `EventListener` values containing `Rc<dyn Fn(Event)>`.
+
+Listeners live in a separate `HtmlElement::listeners` field. Server rendering
+therefore ignores them automatically: server HTML contains no event attributes
+or handler code. Component props cannot use `on:click` because component property
+names must be Rust identifiers; components that need callback props should use a
+normal prop such as `on_click`.
+
+`Event` is browser-independent and currently exposes the event name, target
+value, key, checked state, and bubbling. `MockDom` dispatches events to matching
+listeners and bubbles to ancestors. `WebDom` converts `web-sys` events and adds
+the listener through `add_event_listener_with_callback`.
+
+### Virtual nodes
+
+`VNode` is an owned snapshot of `Element` with element, text, raw HTML, and
+fragment variants. Conversion validates that void elements have no children, so
+the renderer can rely on the same invariant as SSR.
+
+Fragments are retained in the snapshot but flattened before mounting so they
+never create a DOM node. This keeps the representation close to `Element` while
+allowing fragments at the root and inside element children.
+
+### DOM abstraction
+
+`Dom` has an associated `Node` handle and the minimum operations the renderer
+needs:
+
+- create elements, text, and trusted raw HTML wrappers,
+- append, insert, remove, and replace children,
+- set and remove attributes,
+- set text and raw HTML,
+- set and remove event listeners.
+
+`MockDom` stores a parent-aware node arena and serializes back to HTML for
+assertions. `WebDom` wraps `web-sys`; raw HTML uses a
+`<rusty-raw-html style="display: contents">` wrapper so it can be patched without
+injecting markup into the surrounding element.
+
+### Renderer and patching
+
+`Renderer<D: Dom>` owns a DOM and a vector of mounted roots. The first render
+mounts the flattened tree. Later renders compare children by position:
+
+- matching element tags patch attributes, listeners, and children in place,
+- matching text nodes patch only changed text,
+- matching raw HTML nodes patch only changed markup,
+- changed node kinds are replaced,
+- extra children are removed and missing children are appended.
+
+Attribute diffing applies only changed values and removes attributes absent from
+the next tree. Listener diffing removes names that disappeared and replaces
+handlers when the `EventListener` identity changes. Nodes that keep the same kind
+and position preserve their DOM identity; there is no keyed diffing yet.
+
+### Reactive roots
+
+`ReactiveRoot<D>` owns a root `Owner` and an `Rc<RefCell<Renderer<D>>>`. Its view
+function runs inside `create_effect`, so signals read by the view subscribe the
+effect. A signal write reruns the view, rebuilds the element tree, and patches the
+mounted DOM.
+
+Dropping `ReactiveRoot` disposes the owner, which disposes the render effect, and
+drops the renderer, which removes mounted nodes from the container. On
+WebAssembly, `rusty::client::mount_to_body` connects `WebDom` to the document
+body and returns the root; callers must keep that root alive.
+
+The view closure is rerun after every reactive change, so state that must survive
+rerenders belongs outside the closure. Signals created inside the view are
+recreated at their initial value on each run.
+
+The renderer and runtime are single-threaded and synchronous. `with_dom` and
+`with_renderer` borrow the renderer immutably and must not be called from inside
+an in-progress render.
 
 ## Definition of done for each milestone
 

@@ -1,0 +1,19 @@
+[package]
+name = "rusty-dom"
+description = "Browser and test DOM abstractions for the Rusty renderer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rusty-core.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+web-sys.workspace = true
