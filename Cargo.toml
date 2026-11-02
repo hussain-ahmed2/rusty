@@ -23,7 +23,7 @@ rusty-ssr = { path = "crates/rusty-ssr", version = "0.1.0" }
 
 proc-macro2 = "1.0"
 quote = "1.0"
-syn = "2.0"
+syn = { version = "2.0", features = ["full"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

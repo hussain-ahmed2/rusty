@@ -1,10 +1,10 @@
 //! Syntax tree produced by the `view!` parser.
 //!
-//! This tree is independent of `proc_macro` token types so it can be reasoned
-//! about and tested without expanding a macro.
+//! The tree is independent of `proc_macro` expansion so that parsing and
+//! diagnostics can be tested directly.
 
 use proc_macro2::Span;
-use syn::LitStr;
+use syn::{Expr, Ident, LitStr, Pat};
 
 /// A complete `view!` invocation.
 pub(crate) struct View {
@@ -16,8 +16,16 @@ pub(crate) struct View {
 pub(crate) enum Node {
     /// A nested HTML element.
     Element(HtmlElement),
+    /// A component invocation.
+    Component(ComponentElement),
     /// A string-literal text node.
     Text(LitStr),
+    /// A `{ ... }` Rust expression converted through `IntoElement`.
+    Dynamic(Expr),
+    /// An `{#if}` / `{:else if}` / `{:else}` block.
+    If(IfNode),
+    /// An `{#each}` block.
+    Each(Box<EachNode>),
 }
 
 /// An HTML element parsed from the macro input.
@@ -30,7 +38,19 @@ pub(crate) struct HtmlElement {
     pub(crate) children: Vec<Node>,
 }
 
-/// An attribute parsed from an opening tag.
+/// A component invocation parsed from the macro input.
+pub(crate) struct ComponentElement {
+    /// The component type name.
+    pub(crate) name: Name,
+    /// Props in declaration order.
+    pub(crate) attributes: Vec<Attribute>,
+    /// Child nodes passed as the `children` prop.
+    pub(crate) children: Vec<Node>,
+    /// Whether the tag was written as `<Name />` rather than `<Name>...</Name>`.
+    pub(crate) self_closing: bool,
+}
+
+/// An attribute or component prop.
 pub(crate) struct Attribute {
     /// The attribute name.
     pub(crate) name: Name,
@@ -44,12 +64,44 @@ pub(crate) enum AttributeValue {
     Text(LitStr),
     /// A boolean attribute.
     Bool(bool),
+    /// A `{ ... }` Rust expression.
+    Dynamic(Expr),
+}
+
+/// A conditional block.
+pub(crate) struct IfNode {
+    /// The `if` branch followed by any `else if` branches.
+    pub(crate) branches: Vec<IfBranch>,
+    /// The optional final `else` branch.
+    pub(crate) else_children: Option<Vec<Node>>,
+}
+
+/// One condition and its body.
+pub(crate) struct IfBranch {
+    /// The Rust boolean expression.
+    pub(crate) condition: Expr,
+    /// The body rendered when the condition is true.
+    pub(crate) children: Vec<Node>,
+}
+
+/// An iteration block.
+pub(crate) struct EachNode {
+    /// The iterable expression.
+    pub(crate) iterable: Expr,
+    /// The binding pattern for each item.
+    pub(crate) pattern: Pat,
+    /// The body rendered for each item.
+    pub(crate) children: Vec<Node>,
 }
 
 /// A name with the span used for diagnostics.
 pub(crate) struct Name {
     /// Normalized name (raw identifiers have their `r#` prefix removed).
     pub(crate) value: String,
+    /// The original identifier, preserving rawness for generated props.
+    pub(crate) ident: Ident,
+    /// Whether the name contained `-` or `:` separators.
+    pub(crate) has_separators: bool,
     /// Location in the caller's source.
     pub(crate) span: Span,
 }

@@ -99,7 +99,7 @@ fn render_html(element: &HtmlElement, output: &mut String) -> Result<(), RenderE
                 output.push(' ');
                 output.push_str(attribute.name().as_str());
             }
-            AttributeValue::Bool(false) => {}
+            AttributeValue::Bool(false) | AttributeValue::None => {}
         }
     }
 

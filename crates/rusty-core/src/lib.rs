@@ -7,9 +7,15 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod children;
+mod component;
+mod convert;
 mod element;
 mod name;
 
+pub use children::Children;
+pub use component::Component;
+pub use convert::{fragment_from_iter, IntoAttributeValue, IntoElement};
 pub use element::{Attribute, AttributeValue, Element, HtmlElement};
 pub use name::{AttributeName, InvalidName, NameKind, TagName};
 

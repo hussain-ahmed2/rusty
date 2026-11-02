@@ -58,8 +58,8 @@ remain immediately recognizable.
 | Crate | Responsibility | Introduced |
 | --- | --- | --- |
 | `rusty` | Public facade and prelude | M1 |
-| `rusty-core` | Element model, names, shared types | M1 |
-| `rusty-macros` | `view!`, component and server macros | M1 (`view!`) |
+| `rusty-core` | Element model, components, children, conversions | M1, M2 |
+| `rusty-macros` | `view!`, component and server macros | M1 (`view!`), M2 (`#[component]`) |
 | `rusty-ssr` | Server-side HTML rendering | M1 |
 | `rusty-reactivity` | Signals, memos, effects, scheduling | M3 |
 | `rusty-vdom` | Initial render representation (not the update engine) | M4 |
@@ -77,7 +77,7 @@ remain immediately recognizable.
 
 ## Milestones
 
-**Status:** Milestone 1 complete. Next: Milestone 2 — component system.
+**Status:** Milestone 2 complete. Next: Milestone 3 — reactivity.
 
 ### Milestone 1 — Foundation (complete)
 
@@ -108,10 +108,22 @@ half-working behavior. Component tags (uppercase first letter) and dynamic
 `{ ... }` nodes are rejected with a message naming the milestone that introduces
 them.
 
-### Milestone 2 — Component system
+### Milestone 2 — Component system (complete)
 
-`#[component]`, typed props, children, fragments, dynamic expressions,
-conditionals (`{#if}`), iteration (`{#each}`), and component composition.
+Deliverables:
+
+- `#[component]` attribute macro.
+- Typed props generated from function parameters.
+- `Children` for nested content.
+- Dynamic text and attribute expressions.
+- `{#if}` / `{:else if}` / `{:else}` conditionals.
+- `{#each}` iteration with destructuring.
+- Component composition.
+- `IntoElement` and `IntoAttributeValue` conversion traits.
+- Unit, integration, example, and doctest coverage.
+
+Explicit non-goals for M2: reactive updates, event handlers, generic or async
+components, browser rendering, hydration, and lifecycle hooks.
 
 ### Milestone 3 — Reactivity
 
@@ -146,7 +158,8 @@ development server, file watching, hot reload, and production builds.
 ### Milestone 9 — Production features
 
 Static generation, streaming SSR, metadata, caching, image handling, and
-deployment support.
+deployment support. A documentation website deployed through GitHub Pages will
+be added once static generation can produce the site.
 
 ## Milestone 1 architecture
 
@@ -180,9 +193,9 @@ so applications only need the `rusty` facade.
 attacker-controlled markup names. Attribute values are typed as text or boolean;
 `false` booleans are omitted.
 
-The tree is intentionally materialized in M1. This keeps SSR simple and makes
-the macro independently testable. Reactivity in M3 will add node-level update
-handles without retrofitting unsafe shared mutable state.
+The tree is intentionally materialized in M1 and M2. This keeps SSR simple and
+makes the macros independently testable. Reactivity in M3 will add node-level
+update handles without retrofitting unsafe shared mutable state.
 
 ### `view!` macro
 
@@ -197,9 +210,10 @@ the helpers validate them defensively before constructing the tree.
 Compile-time diagnostics include:
 
 - unmatched or mismatched closing tags,
-- component tags before M2,
-- dynamic expressions before M2,
-- unsupported node forms.
+- unsupported node forms,
+- unknown control directives,
+- mismatched control markers,
+- duplicate attributes and duplicate children sources.
 
 ### SSR serializer
 
@@ -236,6 +250,120 @@ Expected output:
 ```html
 <main><h1>Hello from Rusty</h1><p>A Next.js-inspired framework built with Rust.</p></main>
 ```
+
+## Milestone 2 architecture
+
+### Component model
+
+`#[component]` transforms a function such as:
+
+```rust
+#[component]
+pub fn Greeting(name: String) -> Element {
+    view! { <p>{format!("Hello, {name}!")}</p> }
+}
+```
+
+into a braced struct plus a `Component` implementation:
+
+```rust
+pub struct Greeting {
+    pub name: String,
+}
+
+impl Component for Greeting {
+    fn render(self) -> Element {
+        let Self { name } = self;
+        // original function body
+    }
+}
+```
+
+The component tag `<Greeting name="Rusty" />` becomes a normal struct literal:
+
+```rust
+render_component(Greeting {
+    name: Into::into("Rusty"),
+})
+```
+
+This design gives compile-time checking for missing props, unknown props, and
+property types without a second props layer or procedural-macro-only validation.
+Component names must start with an uppercase ASCII letter so the parser can
+distinguish them from HTML tags.
+
+Limitations are explicit: generic, async, and `self`-taking components are
+rejected with milestone-specific diagnostics. Props should use owned or
+`'static` types because references with elided lifetimes require generic
+component support.
+
+### Children
+
+Nested component content is built as one element expression and wrapped in
+`Children`. A component opts in by declaring a `children` parameter:
+
+```rust
+#[component]
+pub fn Layout(children: Children) -> Element {
+    view! { <main>{children}</main> }
+}
+```
+
+A `children: Element` parameter also works through `From<Children> for Element`.
+The syntax is intentionally explicit:
+
+- `<Card />` is self-closing and passes no `children` field. Components without
+  children must use this form.
+- `<Card>...</Card>` is paired and always passes a `children` field, even when
+  the body is empty.
+- `<Card children={content} />` passes programmatic children on a self-closing
+  tag.
+- A paired tag cannot also declare a `children` prop; that is a macro error.
+
+This keeps props exhaustive at compile time without inventing optional props.
+
+### Dynamic conversions
+
+- Dynamic nodes and component props use `IntoElement`.
+- Dynamic HTML attribute values use `IntoAttributeValue`.
+- `Option<T>` renders nothing when `None`.
+- `false` booleans and `AttributeValue::None` omit attributes.
+- `Vec<T>` and arrays render as fragments.
+- Iteration renders through a `FnMut` closure and preserves ownership.
+
+### Control flow
+
+Control blocks are parsed as distinct `view!` nodes, not Rust expressions:
+
+- `{#if condition} ... {:else if condition} ... {:else} ... {/if}`
+- `{#each iterable as pattern} ... {/each}`
+
+At code generation time they become ordinary Rust `if` and iterator expressions.
+Conditions and iterables are fully type-checked Rust expressions. Branches that
+contain multiple nodes are wrapped in fragments.
+
+The `#each` iterable ends at the first top-level `as` token. Wrap cast
+expressions in parentheses so they are not mistaken for the pattern separator.
+
+### Compile-time safety
+
+Macro expansion rejects:
+
+- lowercase component function names,
+- component tags with `-` or `:` separators,
+- component props that are not Rust identifiers,
+- duplicate props or HTML attributes,
+- `children` supplied twice,
+- unknown control directives,
+- mismatched or unclosed control blocks,
+- complex component parameter patterns,
+- generic, async, const, unsafe, extern, or variadic components,
+- where clauses without generic support.
+
+Function attributes are preserved. `#[cfg]` and `#[cfg_attr]` apply to both the
+generated struct and its `Component` impl, while `#[inline]`, `#[cold]`,
+`#[track_caller]`, and lint attributes also apply to the generated `render`
+method.
 
 ## Definition of done for each milestone
 

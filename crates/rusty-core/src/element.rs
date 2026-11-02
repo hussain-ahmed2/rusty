@@ -126,6 +126,8 @@ pub enum AttributeValue {
     Text(String),
     /// A boolean attribute. `false` is omitted from output.
     Bool(bool),
+    /// An absent attribute. Omitted from output.
+    None,
 }
 
 impl AttributeValue {

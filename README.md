@@ -6,22 +6,26 @@ Rusty is a Rust-native full-stack web framework inspired by Next.js. It keeps
 the file-system conventions and component mental model familiar while using Rust
 for components, server code, and the browser runtime.
 
-Rusty is being built incrementally. The current milestone provides the element
-model, the `view!` macro, and safe server-side HTML rendering.
+Rusty is built incrementally. The current milestone provides typed components,
+props, children, dynamic expressions, conditionals, iteration, and safe
+server-side HTML rendering.
 
 ## Status
 
-**Milestone 1 — Foundation (complete)**
+**Milestone 2 — Component system (complete)**
 
-- [x] Cargo workspace
-- [x] Element model with validated tag and attribute names
-- [x] `view!` macro for nested HTML
-- [x] Safe HTML serialization
-- [x] Hello-world example and tests
+- [x] Component types generated from ordinary Rust functions
+- [x] Typed props with compile-time checking
+- [x] Children passed through `Children`
+- [x] Dynamic text and attribute expressions
+- [x] `{#if}` / `{:else if}` / `{:else}` conditionals
+- [x] `{#each}` iteration with destructuring
+- [x] Component composition
+- [x] Safe escaping and validated HTML names
 
-Next up: Milestone 2 (component system). Not yet implemented: components,
-reactivity, browser runtime, hydration, routing, server functions, compiler, and
-CLI. See [docs/PLAN.md](docs/PLAN.md) for the full roadmap and engineering rules.
+Next up: Milestone 3 (reactivity). Not yet implemented: signals, browser runtime,
+hydration, routing, server functions, compiler, and CLI. See
+[docs/PLAN.md](docs/PLAN.md) for the full roadmap and engineering rules.
 
 ## Quick start
 
@@ -33,7 +37,7 @@ cargo run -p hello-world
 Expected output:
 
 ```html
-<main><h1>Hello from Rusty</h1><p>A Next.js-inspired framework built with Rust.</p></main>
+<main class="app"><h1>Hello from Rusty</h1><p>A Next.js-inspired framework built with Rust.</p><ul><li>Components</li><li>Typed props</li><li>Children</li><li>Conditionals</li><li>Iteration</li></ul></main>
 ```
 
 ## Example
@@ -41,25 +45,46 @@ Expected output:
 ```rust
 use rusty::prelude::*;
 
-fn main() {
-    let app = view! {
-        <main>
-            <h1>"Hello from Rusty"</h1>
-            <p>"A Next.js-inspired framework built with Rust."</p>
-        </main>
-    };
+#[component]
+fn Layout(children: Children) -> Element {
+    view! { <main class="app">{children}</main> }
+}
 
+#[component]
+fn Greeting(name: String) -> Element {
+    view! { <h1>{format!("Hello from {name}")}</h1> }
+}
+
+#[component]
+fn Home() -> Element {
+    view! {
+        <Layout>
+            <Greeting name="Rusty" />
+            <p>"A Next.js-inspired framework built with Rust."</p>
+        </Layout>
+    }
+}
+
+fn main() {
+    let app = view! { <Home /> };
     println!("{}", render_to_string(&app).unwrap());
 }
 ```
+
+Components are braced structs at the type level: function parameters become
+typed fields (public when the component is public). `<Greeting name="Rusty" />`
+is checked like a normal Rust
+struct literal, so missing props, unknown props, and wrong prop types are compile
+errors. Use self-closing tags for components without children; paired tags always
+pass nested content as `children`, even when the body is empty.
 
 ## Workspace
 
 | Crate | Purpose |
 | --- | --- |
 | `rusty` | Public facade and prelude |
-| `rusty-core` | Element model and validated names |
-| `rusty-macros` | Procedural macros, starting with `view!` |
+| `rusty-core` | Element model, components, children, conversions |
+| `rusty-macros` | `view!` and `#[component]` procedural macros |
 | `rusty-ssr` | Server-side HTML rendering |
 
 ## Project conventions
@@ -80,7 +105,9 @@ src/app/
         └── route.rs
 ```
 
-This layout is documented now but will only be wired up in Milestone 6.
+This layout is documented now but will only be wired up in Milestone 6. A
+documentation site deployed through GitHub Pages is planned once static
+generation exists.
 
 ## License
 
