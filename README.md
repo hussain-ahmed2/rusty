@@ -11,8 +11,9 @@ props, children, dynamic expressions, conditionals, iteration, safe server-side
 HTML rendering, fine-grained reactive state, a browser runtime that patches DOM
 nodes in place, SSR hydration with state restoration, file-based routing with
 typed route manifests, a transport-neutral full-stack runtime with typed server
-functions, static asset serving from a `public` directory, and production
-WebAssembly client builds through `wasm-bindgen`.
+functions, static asset serving from a `public` directory, production
+WebAssembly client builds through `wasm-bindgen`, and standalone deployment
+bundles.
 
 ## Status
 
@@ -28,8 +29,9 @@ WebAssembly client builds through `wasm-bindgen`.
 - [x] Blocking HTTP/1.1 transport with bounded headers and bodies
 - [x] Public static asset serving and validated build-time asset manifests
 - [x] WebAssembly client builds and automatic client asset serving
+- [x] Standalone deployment bundles with app, public, and client artifacts
 - [ ] Loading boundaries, async handlers, and streaming SSR
-- [ ] Deployment adapters
+- [ ] Platform-specific deployment adapters
 
 Milestones 1–7 provide the `view!` macro, typed components, safe escaping,
 signals, memos, effects, ownership, context, the DOM abstraction, the client
@@ -285,6 +287,8 @@ client_dir = "client"
 `wasm32-unknown-unknown`, and runs `wasm-bindgen --target web`. Output goes to
 `target/rusty/client`, and `target/rusty/client-manifest.json` records the
 entrypoint plus every artifact's path, size, and content fingerprint. The
+standalone deployment bundle in `target/rusty/dist` includes the client and a
+runtime configuration that serves it at `/_rusty/client/`. The
 `wasm-bindgen` CLI must be installed; set `RUSTY_WASM_BINDGEN` to use a different
 executable. `rusty dev` builds the client at startup and rebuilds it when client
 sources, Cargo manifests, or `rusty.toml` change.
@@ -294,6 +298,25 @@ sources, Cargo manifests, or `rusty.toml` change.
 reserved for generated artifacts. Custom routers built from `router()` can opt
 in with `.client_dir(...)`. `RUSTY_HOST` and `RUSTY_PORT` override the configured
 dev bind address.
+
+### Deployment bundle
+
+`rusty build` also writes `target/rusty/dist`, a standalone deployment bundle:
+
+```text
+target/rusty/dist/
+├── <app executable>
+├── rusty.toml
+├── deployment.json
+├── app-manifest.json
+├── client-manifest.json
+├── public/
+└── client/
+```
+
+The runtime configuration uses relative paths, so running the executable from
+the bundle directory serves `public/` and the generated client without editing
+the original project config. Platform-specific adapters remain future work.
 
 ## License
 

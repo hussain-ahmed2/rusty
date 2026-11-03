@@ -266,6 +266,8 @@ Deliverables completed:
 - WebAssembly client builds through Cargo and `wasm-bindgen`, with a separate
   fingerprinted client artifact manifest.
 - Runtime serving of generated client artifacts under `/_rusty/client/`.
+- Standalone deployment bundles with copied native, public, client, and manifest
+  artifacts plus a relative runtime configuration.
 - Recursive build-script tracking so route additions and removals re-expand the
   application macro.
 - Root-layout application to not-found pages, with fallback document generation
@@ -276,7 +278,8 @@ Remaining for Milestone 8:
 
 - Loading boundaries and dependent server/client analysis.
 - Async handlers and streaming SSR.
-- Deployment adapters and incremental builds for larger applications.
+- Platform-specific deployment adapters and incremental builds for larger
+  applications.
 
 Explicit non-goals for the current slice: database integrations and deployment
 adapters.
@@ -938,6 +941,20 @@ the same rules as public assets, and receive the same MIME and cache headers.
 Custom routers can call `Router::client_dir`. The prefix is reserved for
 generated artifacts and is checked before public files.
 
+### Deployment bundle
+
+`rusty build` copies the native executable, `public` tree, generated client,
+manifests, and a rewritten `rusty.toml` into `<out_dir>/dist`. The rewritten
+configuration uses `out_dir = "."` and `public_dir = "public"` so the bundle runs
+from its own directory with the client mounted at `/_rusty/client`. The bundle
+also contains `deployment.json` with the executable name and available artifact
+groups. The directory is written through a temporary sibling and then swapped
+into place, so a failed copy does not leave a partial bundle. Symlinks are
+skipped when copying public and client files.
+
+Platform-specific adapters can consume this bundle without rerunning Cargo.
+Static hosting, serverless, and container adapters remain future work.
+
 ### Development process supervision
 
 `rusty dev` is a process supervisor rather than a separate diagnostics server.
@@ -987,8 +1004,9 @@ explicit and return a typed report for printing by the binary:
 - `rusty generate [--project <path>]` analyzes and writes the manifest under the
   configured output directory.
 - `rusty build [--project <path>] [--release]` writes the application manifest,
-  delegates to Cargo for native compilation, and builds the configured
-  WebAssembly client; `rusty start` delegates to `cargo run`.
+  delegates to Cargo for native compilation, builds the configured WebAssembly
+  client, and writes a standalone deployment bundle; `rusty start` delegates to
+  `cargo run`.
 - `rusty dev [--project <path>] [--host <host>] [--port <port>]` supervises
   `cargo run`, enables development diagnostics, restarts after source changes,
   and rebuilds the configured WebAssembly client when its inputs change.

@@ -8,7 +8,7 @@ use rusty_compiler::fingerprint;
 use rusty_config::RustyConfig;
 use serde::{Deserialize, Serialize};
 
-use crate::CliError;
+use crate::{cargo, CliError};
 
 const CLIENT_MANIFEST_VERSION: u32 = 1;
 const CLIENT_MANIFEST_FILE: &str = "client-manifest.json";
@@ -17,25 +17,6 @@ const CLIENT_MANIFEST_FILE: &str = "client-manifest.json";
 pub(crate) struct ClientBuild {
     pub(crate) entrypoint: String,
     pub(crate) files: usize,
-}
-
-#[derive(Debug, Deserialize)]
-struct Metadata {
-    packages: Vec<Package>,
-    target_directory: PathBuf,
-}
-
-#[derive(Debug, Deserialize)]
-struct Package {
-    name: String,
-    manifest_path: PathBuf,
-    targets: Vec<MetadataTarget>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MetadataTarget {
-    name: String,
-    crate_types: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -85,9 +66,19 @@ pub(crate) fn build(
         )));
     }
 
-    let metadata = metadata(&manifest_path)?;
-    let package = metadata.package_for(&manifest_path)?;
-    let target = package.cdylib_target()?;
+    let metadata = cargo::metadata(&manifest_path).map_err(CliError::Client)?;
+    let package = metadata.package_for(&manifest_path).ok_or_else(|| {
+        CliError::Client(format!(
+            "Cargo metadata did not include the client package at {}",
+            manifest_path.display()
+        ))
+    })?;
+    let target = package.cdylib_target().ok_or_else(|| {
+        CliError::Client(format!(
+            "client package `{}` does not declare a `cdylib` target",
+            package.name
+        ))
+    })?;
     build_package(&manifest_path, release)?;
 
     let profile = if release { "release" } else { "debug" };
@@ -131,40 +122,6 @@ pub(crate) fn build(
     }))
 }
 
-impl Metadata {
-    fn package_for(&self, manifest_path: &Path) -> Result<&Package, CliError> {
-        let requested =
-            fs::canonicalize(manifest_path).unwrap_or_else(|_| manifest_path.to_path_buf());
-        self.packages
-            .iter()
-            .find(|package| {
-                fs::canonicalize(&package.manifest_path)
-                    .unwrap_or_else(|_| package.manifest_path.clone())
-                    == requested
-            })
-            .ok_or_else(|| {
-                CliError::Client(format!(
-                    "Cargo metadata did not include the client package at {}",
-                    manifest_path.display()
-                ))
-            })
-    }
-}
-
-impl Package {
-    fn cdylib_target(&self) -> Result<&MetadataTarget, CliError> {
-        self.targets
-            .iter()
-            .find(|target| target.crate_types.iter().any(|kind| kind == "cdylib"))
-            .ok_or_else(|| {
-                CliError::Client(format!(
-                    "client package `{}` does not declare a `cdylib` target",
-                    self.name
-                ))
-            })
-    }
-}
-
 fn normalize(path: &Path) -> PathBuf {
     path.components()
         .filter(|component| !matches!(component, Component::CurDir))
@@ -173,26 +130,6 @@ fn normalize(path: &Path) -> PathBuf {
 
 fn outputs_overlap(client_dir: &Path, out_dir: &Path) -> bool {
     client_dir == out_dir || client_dir.starts_with(out_dir) || out_dir.starts_with(client_dir)
-}
-
-fn metadata(manifest_path: &Path) -> Result<Metadata, CliError> {
-    let output = Command::new("cargo")
-        .arg("metadata")
-        .arg("--no-deps")
-        .arg("--format-version")
-        .arg("1")
-        .arg("--manifest-path")
-        .arg(manifest_path)
-        .output()
-        .map_err(|error| CliError::Client(format!("cannot run `cargo metadata`: {error}")))?;
-    if !output.status.success() {
-        return Err(CliError::Client(format!(
-            "`cargo metadata` failed for {}",
-            manifest_path.display()
-        )));
-    }
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| CliError::Client(format!("invalid `cargo metadata` output: {error}")))
 }
 
 fn build_package(manifest_path: &Path, release: bool) -> Result<(), CliError> {
@@ -330,48 +267,6 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
-    }
-
-    #[test]
-    fn parses_cargo_metadata_and_selects_cdylib_targets() {
-        let json = br#"{
-            "packages": [
-                {
-                    "name": "demo",
-                    "manifest_path": "/tmp/demo/Cargo.toml",
-                    "targets": [
-                        {"name": "demo", "crate_types": ["cdylib", "rlib"]},
-                        {"name": "demo-bin", "crate_types": ["bin"]}
-                    ]
-                }
-            ],
-            "target_directory": "/tmp/target"
-        }"#;
-        let metadata: super::Metadata = serde_json::from_slice(json).expect("metadata");
-        let package = metadata
-            .package_for(Path::new("/tmp/demo/Cargo.toml"))
-            .expect("package");
-        assert_eq!(package.name, "demo");
-        assert_eq!(package.cdylib_target().expect("cdylib").name, "demo");
-        assert_eq!(metadata.target_directory, Path::new("/tmp/target"));
-
-        let bin_only: super::Metadata = serde_json::from_slice(
-            br#"{
-                "packages": [
-                    {
-                        "name": "bin-only",
-                        "manifest_path": "/tmp/bin-only/Cargo.toml",
-                        "targets": [{"name": "bin-only", "crate_types": ["bin"]}]
-                    }
-                ],
-                "target_directory": "/tmp/target"
-            }"#,
-        )
-        .expect("metadata");
-        let package = bin_only
-            .package_for(Path::new("/tmp/bin-only/Cargo.toml"))
-            .expect("package");
-        assert!(package.cdylib_target().is_err());
     }
 
     #[test]
