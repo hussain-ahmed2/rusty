@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use crate::http::{Headers, Method, Request, Response, StatusCode};
+use crate::http::{Headers, Method, Request, Response, StatusCode, WireBody};
 use crate::{HttpRouter, ServerError};
 
 const DEFAULT_MAX_HEADER_BYTES: usize = 64 * 1024;
@@ -472,9 +472,8 @@ fn read_line<R: BufRead>(reader: &mut R, limit: usize) -> Result<Option<String>,
 }
 
 fn write_response(mut stream: &TcpStream, response: Response, head: bool) -> io::Result<()> {
-    let (status, mut headers, body) = response.into_parts();
+    let (status, mut headers, body) = response.into_wire_parts();
     let allows_body = !matches!(status.as_u16(), 100..=199 | 204 | 304);
-    let body = if allows_body { body.as_slice() } else { &[] };
 
     headers.remove("content-length");
     headers.remove("connection");
@@ -488,15 +487,40 @@ fn write_response(mut stream: &TcpStream, response: Response, head: bool) -> io:
         message.push_str(value);
         message.push_str("\r\n");
     }
-    message.push_str(&format!(
-        "content-length: {}\r\nconnection: close\r\n\r\n",
-        body.len()
-    ));
 
-    stream.write_all(message.as_bytes())?;
-    if !head && allows_body {
-        stream.write_all(body)?;
+    match body {
+        WireBody::Full(body) => {
+            let body = if allows_body { body.as_slice() } else { &[] };
+            message.push_str(&format!(
+                "content-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            ));
+            stream.write_all(message.as_bytes())?;
+            if !head && allows_body {
+                stream.write_all(body)?;
+            }
+        }
+        WireBody::Stream(chunks) if allows_body => {
+            message.push_str("transfer-encoding: chunked\r\nconnection: close\r\n\r\n");
+            stream.write_all(message.as_bytes())?;
+            if !head {
+                for chunk in chunks {
+                    if chunk.is_empty() {
+                        continue;
+                    }
+                    write!(stream, "{:X}\r\n", chunk.len())?;
+                    stream.write_all(&chunk)?;
+                    stream.write_all(b"\r\n")?;
+                }
+                stream.write_all(b"0\r\n\r\n")?;
+            }
+        }
+        WireBody::Stream(_) => {
+            message.push_str("content-length: 0\r\nconnection: close\r\n\r\n");
+            stream.write_all(message.as_bytes())?;
+        }
     }
+
     stream.flush()
 }
 

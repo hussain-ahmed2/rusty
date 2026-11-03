@@ -154,7 +154,9 @@ pub use rusty_server::{
     CsrfMiddleware, CsrfToken, Extensions, Handler, Headers, HttpRouter, Method, Middleware, Next,
     Request, RequestContext, Response, ServerError, StatusCode, CSRF_COOKIE, CSRF_HEADER,
 };
-pub use rusty_ssr::{render_hydrated, render_to_string, HydrationRenderError, RenderError};
+pub use rusty_ssr::{
+    render_hydrated, render_to_chunks, render_to_string, HydrationRenderError, RenderError,
+};
 pub use rusty_vdom::{VNode, VNodeError};
 
 #[cfg(target_arch = "wasm32")]
@@ -354,14 +356,14 @@ pub mod client {
 pub mod prelude {
     pub use crate::{
         app, batch, component, create_effect, create_root, expect_context, memo, on_cleanup,
-        provide_context, render_hydrated, render_to_string, server, signal, untrack, use_context,
-        view, ApiRoute, ApiRouteMatch, Attribute, AttributeName, AttributeValue, Children,
-        ClientRenderError, Component, Dom, DomError, Effect, Element, Event, EventListener,
-        EventName, HtmlElement, HydrationError, HydrationMismatch, HydrationOutcome,
-        HydrationRenderError, HydrationSession, IntoAttributeValue, IntoElement, Memo, MockDom,
-        Owner, ReactiveRoot, RenderError, Renderer, RouteEntry, RouteManifest, RouteMatch,
-        RouteParams, RoutePattern, RouteSegment, RouterError, RpcClient, RpcError, ServerFunction,
-        Signal, TagName, Transport, VNode, VNodeError, HYDRATION_STATE_ID,
+        provide_context, render_hydrated, render_to_chunks, render_to_string, server, signal,
+        untrack, use_context, view, ApiRoute, ApiRouteMatch, Attribute, AttributeName,
+        AttributeValue, Children, ClientRenderError, Component, Dom, DomError, Effect, Element,
+        Event, EventListener, EventName, HtmlElement, HydrationError, HydrationMismatch,
+        HydrationOutcome, HydrationRenderError, HydrationSession, IntoAttributeValue, IntoElement,
+        Memo, MockDom, Owner, ReactiveRoot, RenderError, Renderer, RouteEntry, RouteManifest,
+        RouteMatch, RouteParams, RoutePattern, RouteSegment, RouterError, RpcClient, RpcError,
+        ServerFunction, Signal, TagName, Transport, VNode, VNodeError, HYDRATION_STATE_ID,
     };
     #[cfg(not(target_arch = "wasm32"))]
     pub use crate::{

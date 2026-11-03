@@ -79,6 +79,30 @@ fn serves_a_get_request_and_closes_the_connection() {
 }
 
 #[test]
+fn writes_streaming_responses_with_chunked_encoding() {
+    let router = HttpRouter::new()
+        .get("/stream", |_| {
+            Ok(Response::stream(
+                StatusCode::OK,
+                "text/plain; charset=utf-8",
+                vec![b"hello ".to_vec(), b"world".to_vec()],
+            ))
+        })
+        .expect("route");
+    let server = TestServer::new(ServerConfig::default(), router);
+
+    let response = exchange(
+        server.address(),
+        "GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    );
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.contains("transfer-encoding: chunked\r\n"));
+    assert!(!response.contains("content-length:"));
+    assert!(response.ends_with("\r\n\r\n6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n"));
+}
+
+#[test]
 fn reads_content_length_request_bodies() {
     let router = HttpRouter::new()
         .post("/echo", |context| {

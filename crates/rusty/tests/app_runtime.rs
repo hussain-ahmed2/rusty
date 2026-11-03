@@ -6,8 +6,9 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use rusty::app::{ApiMethods, PageRoute, Router};
+use rusty::app::{ApiHandler, ApiMethods, AsyncApiFuture, AsyncPageFuture, PageRoute, Router};
 use rusty::prelude::*;
 
 struct TempDir {
@@ -69,15 +70,44 @@ fn health(_context: &mut RequestContext) -> Result<Response, ServerError> {
     ))
 }
 
+async fn async_home(_context: &mut RequestContext) -> Result<Element, ServerError> {
+    let label = std::future::ready("async home").await;
+    Ok(view! { <p>{label}</p> })
+}
+
+fn async_home_handler<'a>(context: &'a mut RequestContext) -> AsyncPageFuture<'a> {
+    Box::pin(async_home(context))
+}
+
+async fn async_health(_context: &mut RequestContext) -> Result<Response, ServerError> {
+    let status = std::future::ready("async").await;
+    Ok(Response::json(
+        StatusCode::OK,
+        format!(r#"{{"status":"{status}"}}"#),
+    ))
+}
+
+fn async_health_handler<'a>(context: &'a mut RequestContext) -> AsyncApiFuture<'a> {
+    Box::pin(async_health(context))
+}
+
 fn router() -> Router {
     Router::new()
         .page(PageRoute::new("/", home).layouts(&[root_layout]))
         .page(PageRoute::new("/blog/[slug]", slug))
         .page(PageRoute::new("/broken", broken).error(error_page))
+        .page(PageRoute::async_new("/async", Arc::new(async_home_handler)))
         .api(
             "/api/health",
             ApiMethods {
-                get: Some(health),
+                get: Some(ApiHandler::Sync(health)),
+                ..ApiMethods::default()
+            },
+        )
+        .api(
+            "/api/async",
+            ApiMethods {
+                get: Some(ApiHandler::Async(Arc::new(async_health_handler))),
                 ..ApiMethods::default()
             },
         )
@@ -90,6 +120,7 @@ fn renders_pages_with_layouts_and_parameters() {
 
     let response = router.handle(Request::new(Method::Get, "/")).expect("home");
     assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.is_streaming());
     assert_eq!(response.body(), b"<main><p>home</p></main>");
 
     let response = router
@@ -99,6 +130,23 @@ fn renders_pages_with_layouts_and_parameters() {
     let body = String::from_utf8_lossy(response.body());
     assert!(body.starts_with("<!doctype html>"));
     assert!(body.contains("<p>rusty</p>"));
+}
+
+#[test]
+fn awaits_async_pages_and_api_handlers() {
+    let router = router();
+
+    let response = router
+        .handle(Request::new(Method::Get, "/async"))
+        .expect("async page");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(String::from_utf8_lossy(response.body()).contains("<p>async home</p>"));
+
+    let response = router
+        .handle(Request::new(Method::Get, "/api/async"))
+        .expect("async api");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.body(), br#"{"status":"async"}"#);
 }
 
 #[test]
@@ -193,8 +241,8 @@ fn diagnostics_are_opt_in() {
         .handle(Request::new(Method::Get, "/__rusty/status"))
         .expect("status");
     let body = String::from_utf8_lossy(response.body());
-    assert!(body.contains("\"routes\":3"));
-    assert!(body.contains("\"apiRoutes\":1"));
+    assert!(body.contains("\"routes\":4"));
+    assert!(body.contains("\"apiRoutes\":2"));
 }
 
 #[test]

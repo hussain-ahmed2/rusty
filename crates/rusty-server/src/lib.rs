@@ -4,7 +4,9 @@
 //! and responses, plus method-aware routing, middleware, bearer
 //! authentication, and double-submit-cookie CSRF protection. The optional
 //! [`HttpServer`] transport adapter parses HTTP/1.0 and HTTP/1.1 requests over
-//! TCP and writes [`Response`] values back to the socket.
+//! TCP and writes [`Response`] values back to the socket. Responses created with
+//! [`Response::stream`] use chunked transfer encoding. [`block_on`] runs
+//! request-scoped futures on the current connection thread without a runtime.
 //!
 //! ```
 //! use rusty_server::{HttpRouter, Method, Request, Response, StatusCode};
@@ -28,6 +30,7 @@ mod auth;
 mod context;
 mod csrf;
 mod error;
+mod executor;
 mod http;
 mod middleware;
 mod router;
@@ -37,6 +40,7 @@ pub use auth::{authenticate, require_auth, AuthIdentity, Authenticator, BearerAu
 pub use context::{Extensions, RequestContext};
 pub use csrf::{csrf, CsrfMiddleware, CsrfToken, CSRF_COOKIE, CSRF_HEADER};
 pub use error::ServerError;
+pub use executor::block_on;
 pub use http::{Headers, Method, Request, Response, StatusCode};
 pub use middleware::{Handler, Middleware, Next};
 pub use router::HttpRouter;

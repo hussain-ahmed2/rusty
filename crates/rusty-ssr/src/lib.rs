@@ -1,7 +1,8 @@
 //! Server-side HTML rendering for Rusty.
 //!
 //! Rendering is deterministic and escapes all text and attribute values by
-//! default. Only [`rusty_core::Element::raw_html`] bypasses escaping, and it is
+//! default. [`render_to_chunks`] emits ordered chunks for streaming transports.
+//! Only [`rusty_core::Element::raw_html`] bypasses escaping, and it is
 //! intentionally explicit.
 
 #![forbid(unsafe_code)]
@@ -80,6 +81,8 @@ impl From<HydrationError> for HydrationRenderError {
     }
 }
 
+const CHUNK_SIZE: usize = 8 * 1024;
+
 /// Renders an element tree to an HTML string.
 ///
 /// Text inside elements such as `<script>` and `<style>` is escaped like any
@@ -92,43 +95,63 @@ impl From<HydrationError> for HydrationRenderError {
 /// such as children on a void element.
 pub fn render_to_string(element: &Element) -> Result<String, RenderError> {
     let mut output = String::new();
-    render_element(element, &mut output)?;
+    for chunk in render_to_chunks(element)? {
+        output.push_str(&chunk);
+    }
     Ok(output)
 }
 
-fn render_element(element: &Element, output: &mut String) -> Result<(), RenderError> {
-    match element {
-        Element::Html(html) => render_html(html, output),
-        Element::Text(text) => {
-            escape_text_into(text, output);
-            Ok(())
-        }
-        Element::Fragment(children) => {
-            for child in children {
-                render_element(child, output)?;
+/// Renders an element tree to ordered HTML chunks of roughly eight kilobytes.
+///
+/// Chunks are valid only in order. Concatenating them produces exactly the same
+/// markup as [`render_to_string`]. A single text node can make an individual
+/// chunk larger than the target size.
+///
+/// # Errors
+///
+/// Returns [`RenderError`] when the tree cannot be represented as valid HTML,
+/// such as children on a void element.
+pub fn render_to_chunks(element: &Element) -> Result<Vec<String>, RenderError> {
+    let mut chunks = Vec::new();
+    let mut output = String::new();
+    let mut stack = vec![RenderStep::Element(element)];
+
+    while let Some(step) = stack.pop() {
+        match step {
+            RenderStep::Element(Element::Html(html)) => {
+                validate_html(html)?;
+                write_open_tag(html, &mut output);
+                if !html.tag().is_void() {
+                    stack.push(RenderStep::Close(html));
+                    for child in html.children().iter().rev() {
+                        stack.push(RenderStep::Element(child));
+                    }
+                }
             }
-            Ok(())
+            RenderStep::Element(Element::Text(text)) => escape_text_into(text, &mut output),
+            RenderStep::Element(Element::Fragment(children)) => {
+                for child in children.iter().rev() {
+                    stack.push(RenderStep::Element(child));
+                }
+            }
+            RenderStep::Element(Element::RawHtml(html)) => output.push_str(html),
+            RenderStep::Close(html) => write_close_tag(html, &mut output),
         }
-        Element::RawHtml(html) => {
-            output.push_str(html);
-            Ok(())
+
+        if output.len() >= CHUNK_SIZE {
+            chunks.push(std::mem::take(&mut output));
         }
     }
+
+    if !output.is_empty() {
+        chunks.push(output);
+    }
+    Ok(chunks)
 }
 
-fn render_html(element: &HtmlElement, output: &mut String) -> Result<(), RenderError> {
-    validate_html(element)?;
-    write_open_tag(element, output);
-
-    if !element.tag().is_void() {
-        for child in element.children() {
-            render_element(child, output)?;
-        }
-
-        write_close_tag(element, output);
-    }
-
-    Ok(())
+enum RenderStep<'a> {
+    Element(&'a Element),
+    Close(&'a HtmlElement),
 }
 
 /// Renders hydration markup with deterministic node markers.
@@ -437,6 +460,25 @@ mod tests {
                 tag: String::from("br"),
             })
         );
+    }
+
+    #[test]
+    fn chunks_concatenate_to_the_rendered_string() {
+        let children = (0..2_000)
+            .map(|index| {
+                element(
+                    "p",
+                    vec![],
+                    vec![Element::text(format!("line {index} & more"))],
+                )
+            })
+            .collect::<Vec<_>>();
+        let page = Element::fragment(children);
+
+        let expected = render_to_string(&page).expect("rendering should succeed");
+        let chunks = render_to_chunks(&page).expect("chunk rendering should succeed");
+        assert!(chunks.len() > 1);
+        assert_eq!(chunks.concat(), expected);
     }
 
     #[test]

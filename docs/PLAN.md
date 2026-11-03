@@ -80,9 +80,9 @@ remain immediately recognizable.
 **Status:** Milestone 8 in progress. Configuration, application analysis, the
 CLI commands, compiler-generated runtime registration, page/API/RPC dispatch,
 development restart-on-change, native build/start, static public assets,
-build-time asset manifests, WebAssembly client builds, and generated client
-serving are complete. Loading
-boundaries, async handlers, and deployment adapters remain.
+build-time asset manifests, WebAssembly client builds, generated client
+serving, async handlers, and chunked streaming SSR are complete. Loading
+boundaries and platform-specific deployment adapters remain.
 
 ### Milestone 1 — Foundation (complete)
 
@@ -276,8 +276,7 @@ Deliverables completed:
 
 Remaining for Milestone 8:
 
-- Loading boundaries and dependent server/client analysis.
-- Async handlers and streaming SSR.
+- Loading boundaries, dependent server/client analysis, and client navigation.
 - Platform-specific deployment adapters and incremental builds for larger
   applications.
 
@@ -286,9 +285,9 @@ adapters.
 
 ### Milestone 9 — Production features
 
-Static generation, streaming SSR, metadata, caching, image handling, and
-deployment support. A documentation website deployed through GitHub Pages will
-be added once static generation can produce the site.
+Static generation, metadata, caching, image handling, and deployment support.
+A documentation website deployed through GitHub Pages will be added once static
+generation can produce the site.
 
 ## Milestone 1 architecture
 
@@ -946,6 +945,28 @@ the same rules as public assets, and receive the same MIME and cache headers.
 Custom routers can call `Router::client_dir`. The prefix is reserved for
 generated artifacts and is checked before public files. `CLIENT_URL_PREFIX` is
 shared with the bundle metadata so deployment adapters construct matching URLs.
+
+### Async handlers and streaming SSR
+
+`#[rusty::app]` reads each route module's function signatures at compile time.
+`async fn` pages are registered with `PageRoute::async_new`; `async fn` API
+methods use `ApiHandler::Async`. Sync handlers still use function pointers, so
+existing applications do not change. Async handlers return boxed futures, and
+the blocking server executes them with `rusty_server::block_on`. The executor
+parks the current connection thread on `Pending` and repolls after its waker
+fires; it intentionally provides no timer, I/O driver, or thread pool.
+
+`ServerError` propagation and page error boundaries apply after the future
+resolves. `rusty-ssr::render_to_chunks` traverses the element tree with an
+explicit stack and emits ordered chunks of roughly eight kilobytes without
+building one full HTML string. Page responses use `Response::stream_html`, so
+the HTTP/1.1 transport emits `transfer-encoding: chunked` instead of
+`content-length`. `Response::stream` exposes the same path to middleware and API
+handlers. `Response::body()` still returns a complete byte slice by collecting a
+stream once; `into_parts()` does the same for transport-neutral callers.
+
+Chunked SSR starts after the page future resolves. Loading boundaries,
+suspending subtrees mid-document, and client navigation remain future work.
 
 ### Deployment bundle
 

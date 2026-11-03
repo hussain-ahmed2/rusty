@@ -36,10 +36,11 @@ use syn::parse_macro_input;
 /// ```
 ///
 /// Page modules export `pub fn page(context: &mut RequestContext) ->
-/// Result<Element, ServerError>`. Layouts export `pub fn layout(children:
-/// Children) -> Element`. API routes export lower-case HTTP method handlers such
-/// as `pub fn get(context: &mut RequestContext) -> Result<Response,
-/// ServerError>`.
+/// Result<Element, ServerError>` or an `async fn` with the same signature.
+/// Layouts export `pub fn layout(children: Children) -> Element`. API routes
+/// export lower-case HTTP method handlers such as `pub fn get(context: &mut
+/// RequestContext) -> Result<Response, ServerError>`; those handlers may also be
+/// declared `async`.
 #[proc_macro_attribute]
 pub fn app(attributes: TokenStream, item: TokenStream) -> TokenStream {
     if !attributes.is_empty() {

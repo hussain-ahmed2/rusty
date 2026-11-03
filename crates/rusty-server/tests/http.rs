@@ -52,6 +52,15 @@ fn parses_and_validates_http_types() {
 }
 
 #[test]
+fn collects_streaming_bodies_for_transport_neutral_callers() {
+    let response =
+        Response::stream_html(StatusCode::OK, ["hello ".to_owned(), "stream".to_owned()]);
+    assert!(response.is_streaming());
+    assert_eq!(response.body(), b"hello stream");
+    assert_eq!(response.into_parts().2, b"hello stream");
+}
+
+#[test]
 fn routes_most_specific_matches_and_reports_missing_methods() {
     let app = HttpRouter::new()
         .get("/users/[id]", |context: &mut RequestContext| {

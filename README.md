@@ -30,7 +30,8 @@ bundles.
 - [x] Public static asset serving and validated build-time asset manifests
 - [x] WebAssembly client builds and automatic client asset serving
 - [x] Standalone deployment bundles with app, public, and client artifacts
-- [ ] Loading boundaries, async handlers, and streaming SSR
+- [x] Async page/API handlers and chunked streaming SSR
+- [ ] Loading boundaries
 - [ ] Platform-specific deployment adapters
 
 Milestones 1–7 provide the `view!` macro, typed components, safe escaping,
@@ -242,8 +243,9 @@ The development supervisor runs the application with `cargo run`, sets
 change. `rusty build` writes the application manifest and delegates native
 compilation to Cargo; `rusty start` runs it. Static responses use MIME types
 derived from file extensions, `Cache-Control: public, max-age=3600` in production,
-and `no-cache` in development. Loading boundaries, async handlers, client
-navigation, and deployment adapters remain future milestones.
+and `no-cache` in development. Async handlers and chunked SSR are supported;
+loading boundaries, client navigation, and platform-specific deployment
+adapters remain future milestones.
 
 ## Continuous integration
 
@@ -309,6 +311,22 @@ sources, Cargo manifests, or `rusty.toml` change.
 reserved for generated artifacts. Custom routers built from `router()` can opt
 in with `.client_dir(...)`. `RUSTY_HOST` and `RUSTY_PORT` override the configured
 dev bind address.
+
+### Async handlers and streaming SSR
+
+Page and API modules may export `async fn` handlers. `#[rusty::app]` detects the
+`async` keyword at compile time and registers a future-backed handler. The
+blocking server runs each future on its connection thread with
+`rusty_server::block_on`, so this adds no runtime dependency or thread pool.
+`PageRoute::async_new` and `ApiHandler::Async` are available for hand-built
+routers.
+
+Pages are serialized into ordered eight-kilobyte chunks and sent with
+`transfer-encoding: chunked`. API routes and middleware can opt in with
+`Response::stream` or `Response::stream_html`. `Response::body()` collects a
+streaming body when a transport-neutral caller or test needs the full bytes.
+Chunked SSR currently starts after the page future completes; it does not yet
+insert loading boundaries or await suspended subtrees.
 
 ### Deployment bundle
 

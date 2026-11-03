@@ -1,6 +1,6 @@
 //! Expansion for the `#[rusty::app]` module macro.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -92,6 +92,7 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
     let mut registrations = Vec::new();
     for (route, page, layouts, error) in routes {
         let pattern = route.pattern().to_string();
+        let page_async = modules.is_async(&page, "page");
         let page = modules.ident(&page);
         let layouts = layouts
             .iter()
@@ -104,9 +105,21 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
             }
             None => TokenStream::new(),
         };
+        let page_route = if page_async {
+            quote! {
+                ::rusty::app::PageRoute::async_new(
+                    #pattern,
+                    ::std::sync::Arc::new(
+                        |context| ::std::boxed::Box::pin(#page::page(context)),
+                    ),
+                )
+            }
+        } else {
+            quote! { ::rusty::app::PageRoute::new(#pattern, #page::page) }
+        };
         registrations.push(quote! {
             router = router.page(
-                ::rusty::app::PageRoute::new(#pattern, #page::page)
+                #page_route
                     .layouts(&[#(#layouts::layout),*])
                     #error
             );
@@ -207,24 +220,34 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
 }
 
 fn api_method(
-    names: &BTreeSet<String>,
+    names: &BTreeMap<String, FunctionInfo>,
     lower: &'static str,
     upper: &'static str,
-) -> Option<&'static str> {
-    if names.contains(lower) {
-        Some(lower)
-    } else if names.contains(upper) {
-        Some(upper)
+) -> Option<(&'static str, bool)> {
+    if let Some(function) = names.get(lower) {
+        Some((lower, function.is_async))
     } else {
-        None
+        names.get(upper).map(|function| (upper, function.is_async))
     }
 }
 
-fn api_handler(module: &proc_macro2::Ident, method: Option<&'static str>) -> TokenStream {
+fn api_handler(module: &proc_macro2::Ident, method: Option<(&'static str, bool)>) -> TokenStream {
     match method {
-        Some(method) => {
+        Some((method, true)) => {
             let method = format_ident!("{method}");
-            quote! { ::core::option::Option::Some(#module::#method) }
+            quote! {
+                ::core::option::Option::Some(::rusty::app::ApiHandler::Async(
+                    ::std::sync::Arc::new(
+                        |context| ::std::boxed::Box::pin(#module::#method(context)),
+                    ),
+                ))
+            }
+        }
+        Some((method, false)) => {
+            let method = format_ident!("{method}");
+            quote! {
+                ::core::option::Option::Some(::rusty::app::ApiHandler::Sync(#module::#method))
+            }
         }
         None => quote! { ::core::option::Option::None },
     }
@@ -240,7 +263,11 @@ fn app_error(error: impl std::fmt::Display) -> syn::Error {
 #[derive(Default)]
 struct ModuleMap {
     modules: BTreeMap<PathBuf, proc_macro2::Ident>,
-    functions: BTreeMap<PathBuf, BTreeSet<String>>,
+    functions: BTreeMap<PathBuf, BTreeMap<String, FunctionInfo>>,
+}
+
+struct FunctionInfo {
+    is_async: bool,
 }
 
 impl ModuleMap {
@@ -262,8 +289,15 @@ impl ModuleMap {
         self.modules.get(path).expect("registered module").clone()
     }
 
-    fn functions(&self, path: &Path) -> &BTreeSet<String> {
+    fn functions(&self, path: &Path) -> &BTreeMap<String, FunctionInfo> {
         self.functions.get(path).expect("registered functions")
+    }
+
+    fn is_async(&self, path: &Path, name: &str) -> bool {
+        self.functions
+            .get(path)
+            .and_then(|functions| functions.get(name))
+            .is_some_and(|function| function.is_async)
     }
 
     fn entries(&self) -> Vec<TokenStream> {
@@ -280,7 +314,7 @@ impl ModuleMap {
     }
 }
 
-fn exported_functions(path: &Path) -> syn::Result<BTreeSet<String>> {
+fn exported_functions(path: &Path) -> syn::Result<BTreeMap<String, FunctionInfo>> {
     let source = fs::read_to_string(path).map_err(|error| {
         syn::Error::new(
             Span::call_site(),
@@ -293,11 +327,16 @@ fn exported_functions(path: &Path) -> syn::Result<BTreeSet<String>> {
             format!("cannot parse route module {}: {error}", path.display()),
         )
     })?;
-    let mut functions = BTreeSet::new();
+    let mut functions = BTreeMap::new();
     for item in file.items {
         if let syn::Item::Fn(function) = item {
             if matches!(function.vis, syn::Visibility::Public(_)) {
-                functions.insert(function.sig.ident.to_string());
+                functions.insert(
+                    function.sig.ident.to_string(),
+                    FunctionInfo {
+                        is_async: function.sig.asyncness.is_some(),
+                    },
+                );
             }
         }
     }

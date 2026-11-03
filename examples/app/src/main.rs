@@ -10,3 +10,25 @@ mod app {}
 fn main() -> Result<(), rusty::app::ServeError> {
     app::serve()
 }
+
+#[cfg(test)]
+mod tests {
+    use rusty::prelude::*;
+
+    #[test]
+    fn generated_router_awaits_async_pages_and_apis() {
+        let router = crate::app::router();
+
+        let page = router
+            .handle(Request::new(Method::Get, "/async"))
+            .expect("async page");
+        assert_eq!(page.status(), StatusCode::OK);
+        assert!(String::from_utf8_lossy(page.body()).contains("Async page"));
+
+        let api = router
+            .handle(Request::new(Method::Get, "/api/async"))
+            .expect("async api");
+        assert_eq!(api.status(), StatusCode::OK);
+        assert_eq!(api.body(), br#"{"status":"ok"}"#);
+    }
+}

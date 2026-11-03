@@ -8,24 +8,57 @@
 use std::env;
 use std::error::Error;
 use std::fmt;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
 
 pub use rusty_config::CLIENT_URL_PREFIX;
 use rusty_config::{ConfigError, RustyConfig};
 use rusty_core::{Children, Element};
 use rusty_rpc::{RpcError, RpcRegistry, ServerInvoker};
 use rusty_server::{
-    HttpRouter, HttpServer, Method, Request, RequestContext, Response, ServerError, StatusCode,
+    block_on, HttpRouter, HttpServer, Method, Request, RequestContext, Response, ServerError,
+    StatusCode,
 };
-use rusty_ssr::render_to_string;
+use rusty_ssr::render_to_chunks;
 
 mod assets;
 
 /// Renders a page for a matched route.
 pub type PageHandler = fn(&mut RequestContext) -> Result<Element, ServerError>;
 
-/// Handles an API route method.
-pub type ApiHandler = fn(&mut RequestContext) -> Result<Response, ServerError>;
+/// A boxed future returned by an asynchronous page handler.
+pub type AsyncPageFuture<'a> = Pin<Box<dyn Future<Output = Result<Element, ServerError>> + 'a>>;
+
+/// Renders a page asynchronously for a matched route.
+pub type AsyncPageHandler =
+    Arc<dyn for<'a> Fn(&'a mut RequestContext) -> AsyncPageFuture<'a> + Send + Sync>;
+
+/// Handles an API route method synchronously.
+pub type SyncApiHandler = fn(&mut RequestContext) -> Result<Response, ServerError>;
+
+/// A boxed future returned by an asynchronous API handler.
+pub type AsyncApiFuture<'a> = Pin<Box<dyn Future<Output = Result<Response, ServerError>> + 'a>>;
+
+/// Handles an API route method asynchronously.
+pub type AsyncApiHandler =
+    Arc<dyn for<'a> Fn(&'a mut RequestContext) -> AsyncApiFuture<'a> + Send + Sync>;
+
+/// A synchronous or asynchronous API method handler.
+#[derive(Clone)]
+pub enum ApiHandler {
+    /// A synchronous handler.
+    Sync(SyncApiHandler),
+    /// An asynchronous handler.
+    Async(AsyncApiHandler),
+}
+
+impl From<SyncApiHandler> for ApiHandler {
+    fn from(handler: SyncApiHandler) -> Self {
+        Self::Sync(handler)
+    }
+}
 
 /// Wraps page content in a layout.
 pub type Layout = fn(Children) -> Element;
@@ -43,7 +76,7 @@ struct NotFoundRoute {
 }
 
 /// The API handlers exported by a `route.rs` module.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct ApiMethods {
     /// `GET` handler.
     pub get: Option<ApiHandler>,
@@ -72,11 +105,26 @@ impl ApiMethods {
     }
 }
 
+#[derive(Clone)]
+enum PageEndpoint {
+    Sync(PageHandler),
+    Async(AsyncPageHandler),
+}
+
+impl PageEndpoint {
+    fn render(&self, context: &mut RequestContext) -> Result<Element, ServerError> {
+        match self {
+            Self::Sync(handler) => handler(context),
+            Self::Async(handler) => block_on(handler(context)),
+        }
+    }
+}
+
 /// A page route and its rendering boundaries.
 #[derive(Clone)]
 pub struct PageRoute {
     pattern: String,
-    page: PageHandler,
+    page: PageEndpoint,
     layouts: Vec<Layout>,
     error: Option<ErrorHandler>,
 }
@@ -87,7 +135,18 @@ impl PageRoute {
     pub fn new(pattern: impl Into<String>, page: PageHandler) -> Self {
         Self {
             pattern: pattern.into(),
-            page,
+            page: PageEndpoint::Sync(page),
+            layouts: Vec::new(),
+            error: None,
+        }
+    }
+
+    /// Creates a page route backed by an asynchronous handler.
+    #[must_use]
+    pub fn async_new(pattern: impl Into<String>, page: AsyncPageHandler) -> Self {
+        Self {
+            pattern: pattern.into(),
+            page: PageEndpoint::Async(page),
             layouts: Vec::new(),
             error: None,
         }
@@ -229,13 +288,13 @@ impl Router {
                     "API route `{pattern}` has no method handlers"
                 )));
             }
-            router = add_method(router, pattern, Method::Get, methods.get)?;
-            router = add_method(router, pattern, Method::Head, methods.get)?;
-            router = add_method(router, pattern, Method::Post, methods.post)?;
-            router = add_method(router, pattern, Method::Put, methods.put)?;
-            router = add_method(router, pattern, Method::Patch, methods.patch)?;
-            router = add_method(router, pattern, Method::Delete, methods.delete)?;
-            router = add_method(router, pattern, Method::Options, methods.options)?;
+            router = add_method(router, pattern, Method::Get, methods.get.as_ref())?;
+            router = add_method(router, pattern, Method::Head, methods.get.as_ref())?;
+            router = add_method(router, pattern, Method::Post, methods.post.as_ref())?;
+            router = add_method(router, pattern, Method::Put, methods.put.as_ref())?;
+            router = add_method(router, pattern, Method::Patch, methods.patch.as_ref())?;
+            router = add_method(router, pattern, Method::Delete, methods.delete.as_ref())?;
+            router = add_method(router, pattern, Method::Options, methods.options.as_ref())?;
         }
 
         if !self.rpcs.is_empty() {
@@ -321,16 +380,20 @@ fn add_method(
     router: HttpRouter,
     pattern: &str,
     method: Method,
-    handler: Option<ApiHandler>,
+    handler: Option<&ApiHandler>,
 ) -> Result<HttpRouter, ServerError> {
     match handler {
-        Some(handler) => router.method(method, pattern, handler),
+        Some(ApiHandler::Sync(handler)) => router.method(method, pattern, *handler),
+        Some(ApiHandler::Async(handler)) => {
+            let handler = Arc::clone(handler);
+            router.method(method, pattern, move |context| block_on(handler(context)))
+        }
         None => Ok(router),
     }
 }
 
 fn render_page(route: &PageRoute, context: &mut RequestContext) -> Response {
-    match (route.page)(context) {
+    match route.page.render(context) {
         Ok(page) => render_success(page, &route.layouts),
         Err(error) => {
             let page = route
@@ -342,27 +405,28 @@ fn render_page(route: &PageRoute, context: &mut RequestContext) -> Response {
 }
 
 fn render_success(page: Element, layouts: &[Layout]) -> Response {
-    render_document(page, layouts, StatusCode::OK)
+    render_document(page, layouts, StatusCode::OK, "Rusty")
 }
 
 fn render_failure(page: Element, layouts: &[Layout]) -> Response {
-    render_document(page, layouts, StatusCode::INTERNAL_SERVER_ERROR)
+    render_document(page, layouts, StatusCode::INTERNAL_SERVER_ERROR, "Rusty")
 }
 
-fn render_document(page: Element, layouts: &[Layout], status: StatusCode) -> Response {
+fn render_document(page: Element, layouts: &[Layout], status: StatusCode, title: &str) -> Response {
     let page = apply_layouts(page, layouts);
-    let body = if layouts.is_empty() {
-        match document(&page) {
-            Ok(body) => body,
-            Err(error) => return render_error_response(&error),
+    match render_to_chunks(&page) {
+        Ok(chunks) if layouts.is_empty() => {
+            let mut stream = Vec::with_capacity(chunks.len() + 2);
+            stream.push(format!(
+                "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title></head><body>"
+            ));
+            stream.extend(chunks);
+            stream.push("</body></html>".to_owned());
+            Response::stream_html(status, stream)
         }
-    } else {
-        match render_to_string(&page) {
-            Ok(body) => body,
-            Err(error) => return render_error_response(&error.to_string()),
-        }
-    };
-    Response::html(status, body)
+        Ok(chunks) => Response::stream_html(status, chunks),
+        Err(error) => render_error_response(&error.to_string()),
+    }
 }
 
 fn apply_layouts(mut page: Element, layouts: &[Layout]) -> Element {
@@ -372,29 +436,13 @@ fn apply_layouts(mut page: Element, layouts: &[Layout]) -> Element {
     page
 }
 
-fn document(page: &Element) -> Result<String, String> {
-    let body = render_to_string(page).map_err(|error| error.to_string())?;
-    Ok(format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Rusty</title></head><body>{body}</body></html>"
-    ))
-}
-
 fn render_not_found(route: &NotFoundRoute) -> Response {
-    let page = (route.handler)();
-    if route.layouts.is_empty() {
-        let body = match render_to_string(&page) {
-            Ok(body) => body,
-            Err(error) => return render_error_response(&error.to_string()),
-        };
-        Response::html(
-            StatusCode::NOT_FOUND,
-            format!(
-                "<!doctype html><html><head><meta charset=\"utf-8\"><title>Not Found</title></head><body>{body}</body></html>"
-            ),
-        )
-    } else {
-        render_document(page, &route.layouts, StatusCode::NOT_FOUND)
-    }
+    render_document(
+        (route.handler)(),
+        &route.layouts,
+        StatusCode::NOT_FOUND,
+        "Not Found",
+    )
 }
 
 fn default_error(_error: &ServerError) -> Element {

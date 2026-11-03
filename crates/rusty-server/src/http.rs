@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::{Mutex, OnceLock};
 
 use crate::ServerError;
 
@@ -393,13 +394,115 @@ impl Request {
     }
 }
 
+struct StreamBody {
+    chunks: Mutex<Option<Box<dyn Iterator<Item = Vec<u8>> + Send>>>,
+    collected: OnceLock<Vec<u8>>,
+}
+
+impl StreamBody {
+    fn take_chunks(&self) -> Box<dyn Iterator<Item = Vec<u8>> + Send> {
+        let mut chunks = self
+            .chunks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        chunks.take().unwrap_or_else(empty_chunks)
+    }
+}
+
+fn empty_chunks() -> Box<dyn Iterator<Item = Vec<u8>> + Send> {
+    Box::new(std::iter::empty())
+}
+
+enum ResponseBody {
+    Full(Vec<u8>),
+    Stream(StreamBody),
+}
+
+impl ResponseBody {
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Full(body) => body,
+            Self::Stream(stream) => stream.collected.get_or_init(|| {
+                let mut body = Vec::new();
+                for chunk in stream.take_chunks() {
+                    body.extend(chunk);
+                }
+                body
+            }),
+        }
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        match self {
+            Self::Full(body) => body,
+            Self::Stream(stream) => {
+                if let Some(body) = stream.collected.into_inner() {
+                    body
+                } else {
+                    let chunks = stream
+                        .chunks
+                        .into_inner()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    chunks.unwrap_or_else(empty_chunks).flatten().collect()
+                }
+            }
+        }
+    }
+}
+
+pub(crate) enum WireBody {
+    Full(Vec<u8>),
+    Stream(Box<dyn Iterator<Item = Vec<u8>> + Send>),
+}
+
+impl ResponseBody {
+    fn into_wire(self) -> WireBody {
+        match self {
+            Self::Full(body) => WireBody::Full(body),
+            Self::Stream(stream) => {
+                if let Some(body) = stream.collected.into_inner() {
+                    WireBody::Full(body)
+                } else {
+                    let chunks = stream
+                        .chunks
+                        .into_inner()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    WireBody::Stream(chunks.unwrap_or_else(empty_chunks))
+                }
+            }
+        }
+    }
+}
+
 /// An HTTP response independent of a particular network transport.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Responses normally carry a complete body. [`Response::stream`] creates a
+/// chunked response from an iterator; [`Response::body`] collects such a body
+/// when a transport-neutral caller needs the full bytes.
 pub struct Response {
     status: StatusCode,
     headers: Headers,
-    body: Vec<u8>,
+    body: ResponseBody,
 }
+
+impl fmt::Debug for Response {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Response")
+            .field("status", &self.status)
+            .field("headers", &self.headers)
+            .field("streaming", &matches!(self.body, ResponseBody::Stream(_)))
+            .finish()
+    }
+}
+
+impl PartialEq for Response {
+    fn eq(&self, other: &Self) -> bool {
+        self.status == other.status && self.headers == other.headers && self.body() == other.body()
+    }
+}
+
+impl Eq for Response {}
 
 impl Response {
     /// Creates an empty response with the given status.
@@ -408,7 +511,7 @@ impl Response {
         Self {
             status,
             headers: Headers::new(),
-            body: Vec::new(),
+            body: ResponseBody::Full(Vec::new()),
         }
     }
 
@@ -419,7 +522,7 @@ impl Response {
         let _ = response
             .headers
             .insert("content-type", "text/plain; charset=utf-8");
-        response.body = body.into().into_bytes();
+        response.body = ResponseBody::Full(body.into().into_bytes());
         response
     }
 
@@ -430,7 +533,7 @@ impl Response {
         let _ = response
             .headers
             .insert("content-type", "text/html; charset=utf-8");
-        response.body = body.into().into_bytes();
+        response.body = ResponseBody::Full(body.into().into_bytes());
         response
     }
 
@@ -441,8 +544,45 @@ impl Response {
         let _ = response
             .headers
             .insert("content-type", "application/json; charset=utf-8");
-        response.body = body.into().into_bytes();
+        response.body = ResponseBody::Full(body.into().into_bytes());
         response
+    }
+
+    /// Creates a chunked response from raw byte chunks.
+    ///
+    /// The transport uses `transfer-encoding: chunked` and does not emit a
+    /// `content-length` header. Call [`Response::body`] if a transport-neutral
+    /// caller needs the collected bytes.
+    #[must_use]
+    pub fn stream<I>(status: StatusCode, content_type: impl Into<String>, chunks: I) -> Self
+    where
+        I: IntoIterator<Item = Vec<u8>>,
+        I::IntoIter: Send + 'static,
+    {
+        let mut response = Self::new(status);
+        let _ = response.headers.insert("content-type", content_type);
+        response.body = ResponseBody::Stream(StreamBody {
+            chunks: Mutex::new(Some(Box::new(chunks.into_iter()))),
+            collected: OnceLock::new(),
+        });
+        response
+    }
+
+    /// Creates a chunked HTML response.
+    ///
+    /// Chunks are converted to bytes when the response is consumed.
+    #[must_use]
+    pub fn stream_html<I, C>(status: StatusCode, chunks: I) -> Self
+    where
+        I: IntoIterator<Item = C>,
+        I::IntoIter: Send + 'static,
+        C: Into<Vec<u8>> + Send + 'static,
+    {
+        Self::stream(
+            status,
+            "text/html; charset=utf-8",
+            chunks.into_iter().map(Into::into),
+        )
     }
 
     /// Adds a header.
@@ -469,7 +609,7 @@ impl Response {
     /// Sets the response body.
     #[must_use]
     pub fn with_body(mut self, body: impl Into<Vec<u8>>) -> Self {
-        self.body = body.into();
+        self.body = ResponseBody::Full(body.into());
         self
     }
 
@@ -491,15 +631,29 @@ impl Response {
     }
 
     /// Returns the response body.
+    ///
+    /// Streaming bodies are collected on first access.
     #[must_use]
     pub fn body(&self) -> &[u8] {
-        &self.body
+        self.body.as_bytes()
+    }
+
+    /// Returns `true` when the response was created with [`Response::stream`].
+    #[must_use]
+    pub fn is_streaming(&self) -> bool {
+        matches!(self.body, ResponseBody::Stream(_))
     }
 
     /// Consumes the response and returns its parts.
+    ///
+    /// Streaming bodies are collected into a single byte vector.
     #[must_use]
     pub fn into_parts(self) -> (StatusCode, Headers, Vec<u8>) {
-        (self.status, self.headers, self.body)
+        (self.status, self.headers, self.body.into_bytes())
+    }
+
+    pub(crate) fn into_wire_parts(self) -> (StatusCode, Headers, WireBody) {
+        (self.status, self.headers, self.body.into_wire())
     }
 }
 
