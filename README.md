@@ -286,7 +286,9 @@ client_dir = "client"
 `target/rusty/client`, and `target/rusty/client-manifest.json` records the
 entrypoint plus every artifact's path, size, and content fingerprint. The
 `wasm-bindgen` CLI must be installed; set `RUSTY_WASM_BINDGEN` to use a different
-executable. Development supervision does not rebuild the client yet. `RUSTY_HOST` and `RUSTY_PORT` override the configured dev bind address.
+executable. `rusty dev` builds the client at startup and rebuilds it when client
+sources, Cargo manifests, or `rusty.toml` change. `RUSTY_HOST` and `RUSTY_PORT`
+override the configured dev bind address.
 
 ## License
 

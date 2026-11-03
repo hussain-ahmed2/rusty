@@ -256,7 +256,7 @@ Deliverables completed:
 - Native `Router` dispatch for pages, API routes, RPC functions, and development
   diagnostics.
 - `rusty dev` with rebuild-and-restart file watching, `RUSTY_DEV`, `RUSTY_HOST`,
-  and `RUSTY_PORT` integration.
+  and `RUSTY_PORT` integration, including WASM client rebuilds.
 - `rusty build` and `rusty start` native Cargo orchestration.
 - Safe `public/` static serving with MIME types, cache policy, traversal
   rejection, and root-relative index files.
@@ -927,8 +927,8 @@ The generated directory is cleared before each run. A sorted
 `client-manifest.json` records the format version, package name, JavaScript
 entrypoint, and every artifact's relative path, size, and FNV-1a fingerprint.
 Client artifact names are not rewritten for cache busting; deployment adapters
-can use the manifest fingerprints when publishing. Client compilation is
-production-only and is not part of the `rusty dev` restart loop.
+can use the manifest fingerprints when publishing. Client compilation runs in
+both `rusty build` and `rusty dev`.
 
 ### Development process supervision
 
@@ -938,12 +938,20 @@ It starts `cargo run --quiet` in the project, sets `RUSTY_DEV=1`, and forwards
 `Cargo.toml`, and `rusty.toml` files triggers a rebuild and restart after each
 change. `target`, `.git`, and `node_modules` are skipped.
 
+When `build.client_dir` is configured, the supervisor builds the client before
+starting the application and rebuilds it only when a client source file, any
+`Cargo.toml`, or `rusty.toml` changes. Other application source changes restart
+the native process without invoking `wasm-bindgen`. A failed client build keeps
+the supervisor running and retries on later changes; the native application is
+still started so server-side errors remain visible.
+
 Because procedural macros cannot tell Cargo which files they read, generated
 projects include a build script that recursively emits `cargo:rerun-if-changed`
 for `src`. This ensures adding or removing a route re-expands the macro.
 
-`rusty build` and `rusty start` delegate to `cargo build` and `cargo run`. WASM
-asset orchestration is still pending.
+`rusty build` and `rusty start` delegate to `cargo build` and `cargo run`.
+Production WASM client compilation is handled by the CLI's `wasm` module; a
+standalone `rusty-build` crate remains a future extraction.
 
 ### Manifest format
 
@@ -974,6 +982,7 @@ explicit and return a typed report for printing by the binary:
   delegates to Cargo for native compilation, and builds the configured
   WebAssembly client; `rusty start` delegates to `cargo run`.
 - `rusty dev [--project <path>] [--host <host>] [--port <port>]` supervises
-  `cargo run`, enables development diagnostics, and restarts after source changes.
+  `cargo run`, enables development diagnostics, restarts after source changes,
+  and rebuilds the configured WebAssembly client when its inputs change.
 
 Usage errors exit with status 2; execution failures exit with status 1.

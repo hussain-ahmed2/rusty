@@ -48,15 +48,19 @@ impl DevRunner {
     ///
     /// The application is started with `cargo run` and `RUSTY_DEV=1`. When the
     /// application exits on its own, the supervisor waits for the next change
-    /// before restarting it.
+    /// before restarting it. A configured WebAssembly client is built before
+    /// the first start and rebuilt when its inputs change.
     ///
     /// # Errors
     ///
-    /// Returns an I/O error when `cargo` cannot be started or the project
-    /// snapshot cannot be read.
+    /// Returns a configuration error when `rusty.toml` cannot be read, or an
+    /// I/O error when `cargo` cannot be started or the project snapshot cannot
+    /// be read.
     pub fn run(self) -> Result<(), CliError> {
         let root = self.project.clone();
+        let mut config = RustyConfig::load(&root)?;
         let mut snapshot = snapshot_project(&root).map_err(|error| io_error(&root, &error))?;
+        let mut client_stale = !build_client(&root, &config);
         let mut child = Some(self.spawn()?);
         println!(
             "Rusty dev is watching {}; press Ctrl-C to stop.",
@@ -67,9 +71,35 @@ impl DevRunner {
             thread::sleep(POLL_INTERVAL);
             match snapshot_project(&root) {
                 Ok(next) if next != snapshot => {
+                    let loaded = RustyConfig::load(&root);
+                    let client_dirty = match &loaded {
+                        Ok(next_config) => {
+                            next_config
+                                .build
+                                .client_dir
+                                .as_deref()
+                                .is_some_and(|client_dir| {
+                                    client_inputs_changed(&snapshot, &next, client_dir)
+                                })
+                        }
+                        Err(_) => config
+                            .build
+                            .client_dir
+                            .as_deref()
+                            .is_some_and(|client_dir| {
+                                client_inputs_changed(&snapshot, &next, client_dir)
+                            }),
+                    };
                     snapshot = next;
+                    match loaded {
+                        Ok(next) => config = next,
+                        Err(error) => eprintln!("cannot reload rusty.toml: {error}"),
+                    }
                     if let Some(mut child) = child.take() {
                         stop(&mut child);
+                    }
+                    if client_dirty || client_stale {
+                        client_stale = !build_client(&root, &config);
                     }
                     child = Some(self.spawn()?);
                 }
@@ -104,6 +134,44 @@ impl DevRunner {
             message: error.to_string(),
         })
     }
+}
+
+fn build_client(root: &Path, config: &RustyConfig) -> bool {
+    if config.build.client_dir.is_none() {
+        return true;
+    }
+    match crate::wasm::build(root, config, false) {
+        Ok(Some(client)) => {
+            println!(
+                "Built client {} with {} artifact(s).",
+                client.entrypoint, client.files
+            );
+            true
+        }
+        Ok(None) => true,
+        Err(error) => {
+            eprintln!("client build failed: {error}");
+            false
+        }
+    }
+}
+
+fn client_inputs_changed(
+    old: &BTreeMap<PathBuf, (SystemTime, u64)>,
+    new: &BTreeMap<PathBuf, (SystemTime, u64)>,
+    client_dir: &Path,
+) -> bool {
+    old.iter()
+        .any(|(path, stamp)| new.get(path) != Some(stamp) && is_client_input(path, client_dir))
+        || new
+            .iter()
+            .any(|(path, _)| !old.contains_key(path) && is_client_input(path, client_dir))
+}
+
+fn is_client_input(path: &Path, client_dir: &Path) -> bool {
+    path.starts_with(client_dir)
+        || path == Path::new("rusty.toml")
+        || path.file_name() == Some(std::ffi::OsStr::new("Cargo.toml"))
 }
 
 fn wait_status(child: &mut Child) -> Option<ExitStatus> {
@@ -435,4 +503,66 @@ fn write_state(state: &Arc<RwLock<DevState>>) -> std::sync::RwLockWriteGuard<'_,
     state
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::client_inputs_changed;
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime};
+
+    fn snapshot(entries: &[(&str, u64)]) -> BTreeMap<PathBuf, (SystemTime, u64)> {
+        entries
+            .iter()
+            .map(|(path, size)| {
+                (
+                    PathBuf::from(path),
+                    (SystemTime::UNIX_EPOCH + Duration::from_secs(*size), *size),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_client_inputs_trigger_client_rebuilds() {
+        let client = Path::new("client");
+        let old = snapshot(&[
+            ("client/src/lib.rs", 1),
+            ("src/app/page.rs", 1),
+            ("rusty.toml", 1),
+            ("Cargo.toml", 1),
+        ]);
+        let app_changed = snapshot(&[
+            ("client/src/lib.rs", 1),
+            ("src/app/page.rs", 2),
+            ("rusty.toml", 1),
+            ("Cargo.toml", 1),
+        ]);
+        assert!(!client_inputs_changed(&old, &app_changed, client));
+
+        let client_changed = snapshot(&[
+            ("client/src/lib.rs", 2),
+            ("src/app/page.rs", 1),
+            ("rusty.toml", 1),
+            ("Cargo.toml", 1),
+        ]);
+        assert!(client_inputs_changed(&old, &client_changed, client));
+
+        let manifest_changed = snapshot(&[
+            ("client/src/lib.rs", 1),
+            ("src/app/page.rs", 1),
+            ("rusty.toml", 2),
+            ("Cargo.toml", 1),
+        ]);
+        assert!(client_inputs_changed(&old, &manifest_changed, client));
+
+        let dependency_changed = snapshot(&[
+            ("client/src/lib.rs", 1),
+            ("src/app/page.rs", 1),
+            ("rusty.toml", 1),
+            ("Cargo.toml", 2),
+        ]);
+        assert!(client_inputs_changed(&old, &dependency_changed, client));
+    }
 }
