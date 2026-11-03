@@ -79,9 +79,9 @@ remain immediately recognizable.
 
 **Status:** Milestone 8 in progress. Configuration, application analysis, the
 CLI commands, compiler-generated runtime registration, page/API/RPC dispatch,
-development restart-on-change, native build/start, static public assets, and
-build-time asset manifests are complete. Loading boundaries, async handlers, WASM
-production assets, and deployment adapters remain.
+development restart-on-change, native build/start, static public assets,
+build-time asset manifests, and WebAssembly client builds are complete. Loading
+boundaries, async handlers, and deployment adapters remain.
 
 ### Milestone 1 — Foundation (complete)
 
@@ -260,7 +260,10 @@ Deliverables completed:
 - `rusty build` and `rusty start` native Cargo orchestration.
 - Safe `public/` static serving with MIME types, cache policy, traversal
   rejection, and root-relative index files.
-- Validated static asset entries in the versioned application manifest.
+- Validated static asset entries with content fingerprints in the versioned
+  application manifest.
+- WebAssembly client builds through Cargo and `wasm-bindgen`, with a separate
+  fingerprinted client artifact manifest.
 - Recursive build-script tracking so route additions and removals re-expand the
   application macro.
 - Root-layout application to not-found pages, with fallback document generation
@@ -271,8 +274,7 @@ Remaining for Milestone 8:
 
 - Loading boundaries and dependent server/client analysis.
 - Async handlers and streaming SSR.
-- WASM production asset generation and deployment adapters.
-- Empty-directory and incremental build behavior for larger applications.
+- Deployment adapters and incremental builds for larger applications.
 
 Explicit non-goals for the current slice: database integrations and deployment
 adapters.
@@ -824,8 +826,8 @@ config crate does not touch the filesystem beyond reading the TOML file; the
 compiler reports missing application or source directories with their resolved
 paths. The development host and port are validated and consumed by `rusty dev`
 and the standard application runtime, with `RUSTY_HOST` and `RUSTY_PORT` taking
-precedence. `app.public_dir` defaults to `public` and is resolved relative to the
-project root.
+precedence. `app.public_dir` defaults to `public` and `build.client_dir` is an
+optional client package; both are resolved relative to the project root.
 
 ### Application analysis
 
@@ -906,10 +908,27 @@ through to the application not-found boundary.
 
 The compiler walks `public` recursively without following symlinks. Asset URLs
 percent-encode path segments, and the manifest rejects empty paths, parent
-components, malformed URLs, and duplicate URLs. Missing public directories
+components, malformed URLs, and duplicate URLs. Each asset also records a stable
+FNV-1a content fingerprint for deployment cache keys. Missing public directories
 produce an empty asset list. `rusty build` analyzes and writes this manifest before
 Cargo compiles the application. Static responses currently buffer the whole file;
 streaming bodies remain future work.
+
+### WebAssembly client builds
+
+When `build.client_dir` is set, `rusty build` runs `cargo metadata` against that
+package, requires a `cdylib` target, and compiles it for
+`wasm32-unknown-unknown` with the same debug/release profile as the native build.
+It then runs `wasm-bindgen --target web` into `<out_dir>/client` using the
+library target name as the output name. `RUSTY_WASM_BINDGEN` overrides the tool
+path.
+
+The generated directory is cleared before each run. A sorted
+`client-manifest.json` records the format version, package name, JavaScript
+entrypoint, and every artifact's relative path, size, and FNV-1a fingerprint.
+Client artifact names are not rewritten for cache busting; deployment adapters
+can use the manifest fingerprints when publishing. Client compilation is
+production-only and is not part of the `rusty dev` restart loop.
 
 ### Development process supervision
 
@@ -930,7 +949,8 @@ asset orchestration is still pending.
 
 `AppManifest` embeds the route manifest, the configured source root, the sorted
 server-function catalog, and the sorted static asset catalog behind a format
-version. JSON restoration revalidates route patterns and duplicate shapes, checks
+version. `client-manifest.json` separately describes generated WebAssembly client
+artifacts. JSON restoration revalidates route patterns and duplicate shapes, checks
 the manifest version, validates asset paths and URLs, and rejects empty names,
 modules, or source paths. Build artifacts therefore fail loudly when edited or
 produced by an incompatible compiler.
@@ -950,9 +970,9 @@ explicit and return a typed report for printing by the binary:
 - `rusty check [--project <path>]` analyzes without writing.
 - `rusty generate [--project <path>]` analyzes and writes the manifest under the
   configured output directory.
-- `rusty build [--project <path>] [--release]` writes the application manifest and
-  delegates to Cargo for native compilation; `rusty start` delegates to
-  `cargo run`.
+- `rusty build [--project <path>] [--release]` writes the application manifest,
+  delegates to Cargo for native compilation, and builds the configured
+  WebAssembly client; `rusty start` delegates to `cargo run`.
 - `rusty dev [--project <path>] [--host <host>] [--port <port>]` supervises
   `cargo run`, enables development diagnostics, and restarts after source changes.
 

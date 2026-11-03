@@ -19,6 +19,7 @@
 //!
 //! [build]
 //! out_dir = "target/rusty"
+//! client_dir = "client"
 //!
 //! [dev]
 //! host = "127.0.0.1"
@@ -126,12 +127,16 @@ pub struct BuildConfig {
     /// Directory for generated manifests and build artifacts, relative to the
     /// project root. Defaults to `target/rusty`.
     pub out_dir: PathBuf,
+    /// Optional Cargo package that builds the browser client to WebAssembly.
+    /// The package must produce a `cdylib`; relative to the project root.
+    pub client_dir: Option<PathBuf>,
 }
 
 impl Default for BuildConfig {
     fn default() -> Self {
         Self {
             out_dir: PathBuf::from("target/rusty"),
+            client_dir: None,
         }
     }
 }
@@ -261,6 +266,9 @@ impl RustyConfig {
         validate_relative("app.app_dir", &self.app.app_dir)?;
         validate_relative("app.public_dir", &self.app.public_dir)?;
         validate_relative("build.out_dir", &self.build.out_dir)?;
+        if let Some(client_dir) = &self.build.client_dir {
+            validate_relative("build.client_dir", client_dir)?;
+        }
         if self.dev.host.trim().is_empty() {
             return Err(ConfigError::Invalid {
                 field: "dev.host".to_owned(),

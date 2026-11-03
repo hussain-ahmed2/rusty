@@ -49,7 +49,9 @@ fn visit(root: &Path, directory: &Path, assets: &mut Vec<Asset>) -> Result<(), C
                 .metadata()
                 .map_err(|error| crate::error::io(&path, &error))?
                 .len();
-            assets.push(Asset::new(relative, url, bytes));
+            let contents = fs::read(&path).map_err(|error| crate::error::io(&path, &error))?;
+            let fingerprint = crate::fingerprint::fingerprint(&contents);
+            assets.push(Asset::new(relative, url, bytes, fingerprint));
         }
     }
     Ok(())

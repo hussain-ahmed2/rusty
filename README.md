@@ -11,7 +11,8 @@ props, children, dynamic expressions, conditionals, iteration, safe server-side
 HTML rendering, fine-grained reactive state, a browser runtime that patches DOM
 nodes in place, SSR hydration with state restoration, file-based routing with
 typed route manifests, a transport-neutral full-stack runtime with typed server
-functions, and static asset serving from a `public` directory.
+functions, static asset serving from a `public` directory, and production
+WebAssembly client builds through `wasm-bindgen`.
 
 ## Status
 
@@ -26,8 +27,9 @@ functions, and static asset serving from a `public` directory.
 - [x] Development rebuild-and-restart loop with file watching
 - [x] Blocking HTTP/1.1 transport with bounded headers and bodies
 - [x] Public static asset serving and validated build-time asset manifests
+- [x] WebAssembly client builds with fingerprinted client manifests
 - [ ] Loading boundaries, async handlers, and streaming SSR
-- [ ] WASM production asset pipeline and deployment adapters
+- [ ] Deployment adapters
 
 Milestones 1–7 provide the `view!` macro, typed components, safe escaping,
 signals, memos, effects, ownership, context, the DOM abstraction, the client
@@ -238,7 +240,7 @@ change. `rusty build` writes the application manifest and delegates native
 compilation to Cargo; `rusty start` runs it. Static responses use MIME types
 derived from file extensions, `Cache-Control: public, max-age=3600` in production,
 and `no-cache` in development. Loading boundaries, async handlers, client
-navigation, and a WASM asset pipeline remain future milestones.
+navigation, and deployment adapters remain future milestones.
 
 ## Configuration
 
@@ -252,6 +254,7 @@ public_dir = "public"
 
 [build]
 out_dir = "target/rusty"
+# client_dir = "client"
 
 [dev]
 host = "127.0.0.1"
@@ -261,12 +264,29 @@ port = 3000
 Paths must be relative to the project root and cannot contain `..`. Unknown
 fields are rejected. A development port of `0` asks the operating system for an
 ephemeral port. `rusty check` analyzes the application without writing, while
-`rusty generate` writes `target/rusty/app-manifest.json`.
+`rusty generate` writes `target/rusty/app-manifest.json`. The optional
+`build.client_dir` points at a Cargo package that produces a `cdylib` target.
 
 `rusty dev` starts the application with `RUSTY_DEV=1` and restarts it when
 watched files change. In development the runtime serves `/__rusty/health` and
 `/__rusty/status`; status reports the generated page, API, and server-function
-counts. `rusty build` writes the asset manifest before compiling. `RUSTY_HOST` and `RUSTY_PORT` override the configured dev bind address.
+counts. `rusty build` writes the asset manifest before compiling.
+
+### WebAssembly client builds
+
+Set `build.client_dir` to a Cargo package with a `cdylib` target:
+
+```toml
+[build]
+client_dir = "client"
+```
+
+`rusty build` then runs `cargo metadata`, compiles the package for
+`wasm32-unknown-unknown`, and runs `wasm-bindgen --target web`. Output goes to
+`target/rusty/client`, and `target/rusty/client-manifest.json` records the
+entrypoint plus every artifact's path, size, and content fingerprint. The
+`wasm-bindgen` CLI must be installed; set `RUSTY_WASM_BINDGEN` to use a different
+executable. Development supervision does not rebuild the client yet. `RUSTY_HOST` and `RUSTY_PORT` override the configured dev bind address.
 
 ## License
 

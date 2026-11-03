@@ -13,8 +13,9 @@
 //!
 //! `check` analyzes routes and server functions without writing files.
 //! `generate` writes the analyzed application manifest under the configured
-//! output directory. `build` compiles the application, `start` runs it, and
-//! `dev` rebuilds and restarts it when source files change.
+//! output directory. `build` compiles the application and any configured
+//! WebAssembly client, `start` runs it, and `dev` rebuilds and restarts it when
+//! source files change.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -30,6 +31,7 @@ use rusty_config::{ConfigError, RustyConfig};
 use rusty_server::ServerError;
 
 mod dev;
+mod wasm;
 
 pub use dev::{DevRunner, DevServer};
 
@@ -42,7 +44,7 @@ Usage:
   rusty check [--project <path>]    Analyze routes and server functions
   rusty generate [--project <path>] Write the application manifest
   rusty build [--project <path>] [--release]
-                                    Compile the application
+                                    Compile native and client artifacts
   rusty start [--project <path>] [--release]
                                     Run the compiled application
   rusty dev [--project <path>] [--host <host>] [--port <port>]
@@ -156,6 +158,8 @@ pub enum CliError {
     Compile(CompileError),
     /// The development server failed.
     Server(String),
+    /// The WebAssembly client build failed.
+    Client(String),
     /// A child command exited unsuccessfully.
     CommandFailed {
         /// The command that failed.
@@ -193,6 +197,7 @@ impl fmt::Display for CliError {
             Self::Config(error) => error.fmt(formatter),
             Self::Compile(error) => error.fmt(formatter),
             Self::Server(message) => write!(formatter, "server error: {message}"),
+            Self::Client(message) => write!(formatter, "client build failed: {message}"),
             Self::CommandFailed { command, status } => match status {
                 Some(status) => write!(formatter, "`{command}` failed with status {status}"),
                 None => write!(formatter, "`{command}` failed"),
@@ -489,14 +494,23 @@ pub fn execute(command: Command) -> Result<Report, CliError> {
         }
         Command::Build { project, release } => {
             let compiler = AppCompiler::from_project(&project)?;
+            let config = compiler.config().clone();
             let manifest = compiler.analyze()?;
             compiler.write_manifest(&manifest)?;
             run_cargo(&project, "build", release)?;
-            Ok(Report::new(format!(
+            let client = wasm::build(&project, &config, release)?;
+            let mut message = format!(
                 "Built Rusty application in {} and wrote {}.",
                 project.display(),
                 compiler.manifest_path().display()
-            )))
+            );
+            if let Some(client) = client {
+                message.push_str(&format!(
+                    " Built client {} with {} artifact(s).",
+                    client.entrypoint, client.files
+                ));
+            }
+            Ok(Report::new(message))
         }
         Command::Start { project, release } => {
             let config = RustyConfig::load(&project)?;
@@ -750,7 +764,7 @@ fn write_file(path: &Path, contents: &str) -> Result<(), CliError> {
     fs::write(path, contents).map_err(|error| io_error(path, &error))
 }
 
-fn io_error(path: &Path, error: &std::io::Error) -> CliError {
+pub(crate) fn io_error(path: &Path, error: &std::io::Error) -> CliError {
     CliError::Io {
         path: path.to_path_buf(),
         message: error.to_string(),

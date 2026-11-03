@@ -108,6 +108,7 @@ fn analyzes_routes_and_server_functions() {
     assert_eq!(manifest.assets()[0].url(), "/fonts/site.css");
     assert_eq!(manifest.assets()[0].path(), Path::new("fonts/site.css"));
     assert_eq!(manifest.assets()[0].bytes(), 23);
+    assert_eq!(manifest.assets()[0].fingerprint().len(), 16);
 
     let pages = manifest
         .routes()
@@ -260,7 +261,7 @@ fn rejects_unknown_manifest_versions() {
     let json = manifest
         .to_json()
         .expect("serialize")
-        .replace("\"version\":2", "\"version\":99");
+        .replace("\"version\":3", "\"version\":99");
 
     let error = rusty_compiler::AppManifest::from_json(&json).expect_err("version");
     assert!(matches!(error, CompileError::Manifest(message) if message.contains("version")));

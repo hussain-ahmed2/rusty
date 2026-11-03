@@ -21,6 +21,7 @@
 
 mod assets;
 mod error;
+mod fingerprint;
 mod manifest;
 mod server;
 
@@ -31,6 +32,7 @@ use rusty_config::RustyConfig;
 use rusty_router::RouteManifest;
 
 pub use error::CompileError;
+pub use fingerprint::fingerprint;
 pub use manifest::{AppManifest, Asset, ServerFunction, MANIFEST_VERSION};
 
 /// The file name used for generated application manifests.

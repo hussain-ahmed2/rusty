@@ -46,6 +46,7 @@ fn defaults_apply_when_sections_and_fields_are_missing() {
     assert_eq!(config.app.app_dir, PathBuf::from("src/app"));
     assert_eq!(config.app.public_dir, PathBuf::from("public"));
     assert_eq!(config.build.out_dir, PathBuf::from("target/rusty"));
+    assert_eq!(config.build.client_dir, None);
     assert_eq!(config.dev.host, "127.0.0.1");
     assert_eq!(config.dev.port, 4100);
 }
@@ -79,6 +80,10 @@ fn unknown_fields_and_invalid_values_are_rejected() {
         RustyConfig::parse("[build]\nout_dir = \"/tmp/out\"\n"),
         Err(ConfigError::Invalid { field, .. }) if field == "build.out_dir"
     ));
+    assert!(matches!(
+        RustyConfig::parse("[build]\nclient_dir = \"../client\"\n"),
+        Err(ConfigError::Invalid { field, .. }) if field == "build.client_dir"
+    ));
 }
 
 #[test]
@@ -92,6 +97,7 @@ fn configuration_round_trips_through_toml() {
 
         [build]
         out_dir = "dist/rusty"
+        client_dir = "client"
 
         [dev]
         host = "0.0.0.0"

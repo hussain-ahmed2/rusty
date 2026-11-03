@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::CompileError;
 
 /// The current application manifest format version.
-pub const MANIFEST_VERSION: u32 = 2;
+pub const MANIFEST_VERSION: u32 = 3;
 
 /// A discovered `#[server]` function.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,11 +64,17 @@ pub struct Asset {
     path: PathBuf,
     url: String,
     bytes: u64,
+    fingerprint: String,
 }
 
 impl Asset {
-    pub(crate) fn new(path: PathBuf, url: String, bytes: u64) -> Self {
-        Self { path, url, bytes }
+    pub(crate) fn new(path: PathBuf, url: String, bytes: u64, fingerprint: String) -> Self {
+        Self {
+            path,
+            url,
+            bytes,
+            fingerprint,
+        }
     }
 
     /// Returns the file path relative to the public directory.
@@ -87,6 +93,12 @@ impl Asset {
     #[must_use]
     pub fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    /// Returns the stable content fingerprint.
+    #[must_use]
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
     }
 }
 
@@ -224,6 +236,17 @@ impl AppManifest {
             {
                 return Err(CompileError::Manifest(format!(
                     "public asset path `{}` must be relative and cannot contain `..`",
+                    asset.path.display()
+                )));
+            }
+            if asset.fingerprint.len() != 16
+                || !asset
+                    .fingerprint
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(CompileError::Manifest(format!(
+                    "public asset `{}` has an invalid fingerprint",
                     asset.path.display()
                 )));
             }
