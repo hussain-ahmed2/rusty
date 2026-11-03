@@ -20,6 +20,7 @@
 #![deny(missing_docs)]
 
 mod assets;
+mod client_manifest;
 mod error;
 mod fingerprint;
 mod manifest;
@@ -31,6 +32,9 @@ use std::path::{Path, PathBuf};
 use rusty_config::RustyConfig;
 use rusty_router::RouteManifest;
 
+pub use client_manifest::{
+    ClientFile, ClientManifest, CLIENT_MANIFEST_FILE, CLIENT_MANIFEST_VERSION,
+};
 pub use error::CompileError;
 pub use fingerprint::fingerprint;
 pub use manifest::{AppManifest, Asset, ServerFunction, MANIFEST_VERSION};

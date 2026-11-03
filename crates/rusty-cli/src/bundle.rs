@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rusty_compiler::{CLIENT_MANIFEST_FILE, MANIFEST_FILE};
 use rusty_config::RustyConfig;
 use serde::Serialize;
 
@@ -10,8 +11,6 @@ use crate::{cargo, CliError};
 
 const BUNDLE_VERSION: u32 = 1;
 const DEPLOYMENT_MANIFEST: &str = "deployment.json";
-const APP_MANIFEST: &str = "app-manifest.json";
-const CLIENT_MANIFEST: &str = "client-manifest.json";
 
 #[derive(Debug)]
 pub(crate) struct Bundle {
@@ -126,16 +125,16 @@ fn populate(
         false
     };
 
-    let app_manifest = out_dir.join(APP_MANIFEST);
+    let app_manifest = out_dir.join(MANIFEST_FILE);
     if !app_manifest.is_file() {
         return Err(CliError::Bundle(format!(
             "application manifest is missing at {}",
             app_manifest.display()
         )));
     }
-    fs::copy(&app_manifest, temporary.join(APP_MANIFEST))
+    fs::copy(&app_manifest, temporary.join(MANIFEST_FILE))
         .map_err(|error| crate::io_error(&app_manifest, &error))?;
-    let client_manifest = out_dir.join(CLIENT_MANIFEST);
+    let client_manifest = out_dir.join(CLIENT_MANIFEST_FILE);
     let client_manifest_copied = if client_copied {
         if !client_manifest.is_file() {
             return Err(CliError::Bundle(format!(
@@ -143,7 +142,7 @@ fn populate(
                 client_manifest.display()
             )));
         }
-        fs::copy(&client_manifest, temporary.join(CLIENT_MANIFEST))
+        fs::copy(&client_manifest, temporary.join(CLIENT_MANIFEST_FILE))
             .map_err(|error| crate::io_error(&client_manifest, &error))?;
         true
     } else {
@@ -162,8 +161,8 @@ fn populate(
     let deployment = DeploymentManifest {
         version: BUNDLE_VERSION,
         executable: executable_name,
-        app_manifest: APP_MANIFEST.to_owned(),
-        client_manifest: client_manifest_copied.then(|| CLIENT_MANIFEST.to_owned()),
+        app_manifest: MANIFEST_FILE.to_owned(),
+        client_manifest: client_manifest_copied.then(|| CLIENT_MANIFEST_FILE.to_owned()),
         public: public_copied,
         client: client_copied,
     };

@@ -287,7 +287,9 @@ client_dir = "client"
 `wasm32-unknown-unknown`, and runs `wasm-bindgen --target web`. Output goes to
 `target/rusty/client`, and `target/rusty/client-manifest.json` records the
 entrypoint plus every artifact's path, size, and content fingerprint. The
-standalone deployment bundle in `target/rusty/dist` includes the client and a
+manifest is validated before it is written: paths must be relative and unique,
+the entrypoint must be listed, and fingerprints must be valid. The standalone
+deployment bundle in `target/rusty/dist` includes the client and a
 runtime configuration that serves it at `/_rusty/client/`. The
 `wasm-bindgen` CLI must be installed; set `RUSTY_WASM_BINDGEN` to use a different
 executable. `rusty dev` builds the client at startup and rebuilds it when client

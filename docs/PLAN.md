@@ -263,7 +263,7 @@ Deliverables completed:
   rejection, and root-relative index files.
 - Validated static asset entries with content fingerprints in the versioned
   application manifest.
-- WebAssembly client builds through Cargo and `wasm-bindgen`, with a separate
+- WebAssembly client builds through Cargo and `wasm-bindgen`, with a validated,
   fingerprinted client artifact manifest.
 - Runtime serving of generated client artifacts under `/_rusty/client/`.
 - Standalone deployment bundles with copied native, public, client, and manifest
@@ -983,7 +983,8 @@ standalone `rusty-build` crate remains a future extraction.
 `AppManifest` embeds the route manifest, the configured source root, the sorted
 server-function catalog, and the sorted static asset catalog behind a format
 version. `client-manifest.json` separately describes generated WebAssembly client
-artifacts. JSON restoration revalidates route patterns and duplicate shapes, checks
+artifacts through `ClientManifest`, which validates relative unique paths,
+entrypoint membership, and fingerprint formatting when written or restored. JSON restoration revalidates route patterns and duplicate shapes, checks
 the manifest version, validates asset paths and URLs, and rejects empty names,
 modules, or source paths. Build artifacts therefore fail loudly when edited or
 produced by an incompatible compiler.

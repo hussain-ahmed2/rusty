@@ -4,36 +4,15 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-use rusty_compiler::fingerprint;
+use rusty_compiler::{fingerprint, ClientFile, ClientManifest, CLIENT_MANIFEST_FILE};
 use rusty_config::RustyConfig;
-use serde::{Deserialize, Serialize};
 
 use crate::{cargo, CliError};
-
-const CLIENT_MANIFEST_VERSION: u32 = 1;
-const CLIENT_MANIFEST_FILE: &str = "client-manifest.json";
 
 #[derive(Debug)]
 pub(crate) struct ClientBuild {
     pub(crate) entrypoint: String,
     pub(crate) files: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ClientManifest {
-    version: u32,
-    package: String,
-    entrypoint: String,
-    files: Vec<ClientFile>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ClientFile {
-    path: PathBuf,
-    bytes: u64,
-    fingerprint: String,
 }
 
 pub(crate) fn build(
@@ -109,16 +88,14 @@ pub(crate) fn build(
         )));
     }
     let files = collect_files(&out_dir)?;
-    let manifest = ClientManifest {
-        version: CLIENT_MANIFEST_VERSION,
-        package: package.name.clone(),
-        entrypoint: entrypoint.clone(),
-        files,
-    };
-    write_manifest(&manifest, &client_manifest_path)?;
+    let manifest = ClientManifest::new(package.name.clone(), entrypoint.clone(), files)
+        .map_err(|error| CliError::Client(error.to_string()))?;
+    manifest
+        .write_to(&client_manifest_path)
+        .map_err(|error| CliError::Client(error.to_string()))?;
     Ok(Some(ClientBuild {
         entrypoint,
-        files: manifest.files.len(),
+        files: manifest.files().len(),
     }))
 }
 
@@ -191,7 +168,7 @@ fn reset_directory(path: &Path) -> Result<(), CliError> {
 fn collect_files(root: &Path) -> Result<Vec<ClientFile>, CliError> {
     let mut files = Vec::new();
     visit(root, root, &mut files)?;
-    files.sort_by(|left, right| left.path.cmp(&right.path));
+    files.sort_by(|left, right| left.path().cmp(right.path()));
     Ok(files)
 }
 
@@ -217,30 +194,15 @@ fn visit(root: &Path, directory: &Path, files: &mut Vec<ClientFile>) -> Result<(
                 .map_err(|error| crate::io_error(&path, &error))?
                 .len();
             let contents = fs::read(&path).map_err(|error| crate::io_error(&path, &error))?;
-            files.push(ClientFile {
-                path: relative,
-                bytes,
-                fingerprint: fingerprint(&contents),
-            });
+            files.push(ClientFile::new(relative, bytes, fingerprint(&contents)));
         }
     }
     Ok(())
 }
 
-fn write_manifest(manifest: &ClientManifest, path: &Path) -> Result<(), CliError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| crate::io_error(parent, &error))?;
-    }
-    let json = serde_json::to_string_pretty(manifest)
-        .map_err(|error| CliError::Client(error.to_string()))?;
-    fs::write(path, json).map_err(|error| crate::io_error(path, &error))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        collect_files, outputs_overlap, ClientFile, ClientManifest, CLIENT_MANIFEST_VERSION,
-    };
+    use super::{collect_files, outputs_overlap};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -299,27 +261,9 @@ mod tests {
 
         let files = collect_files(&directory.path).expect("collect");
         assert_eq!(files.len(), 2);
-        assert_eq!(files[0].path, Path::new("b.js"));
-        assert_eq!(files[0].bytes, 1);
-        assert_eq!(files[0].fingerprint.len(), 16);
-        assert_eq!(files[1].path, Path::new("nested/a.wasm"));
-    }
-
-    #[test]
-    fn client_manifests_round_trip_through_json() {
-        let manifest = ClientManifest {
-            version: CLIENT_MANIFEST_VERSION,
-            package: "demo".to_owned(),
-            entrypoint: "demo.js".to_owned(),
-            files: vec![ClientFile {
-                path: Path::new("demo.js").to_path_buf(),
-                bytes: 12,
-                fingerprint: "0123456789abcdef".to_owned(),
-            }],
-        };
-        let json = serde_json::to_string_pretty(&manifest).expect("serialize");
-        let restored: ClientManifest = serde_json::from_str(&json).expect("restore");
-        assert_eq!(restored.package, "demo");
-        assert_eq!(restored.files[0].path, Path::new("demo.js"));
+        assert_eq!(files[0].path(), Path::new("b.js"));
+        assert_eq!(files[0].bytes(), 1);
+        assert_eq!(files[0].fingerprint().len(), 16);
+        assert_eq!(files[1].path(), Path::new("nested/a.wasm"));
     }
 }

@@ -61,6 +61,8 @@ pub enum CompileError {
     },
     /// A serialized application manifest is invalid.
     Manifest(String),
+    /// A serialized client manifest is invalid.
+    ClientManifest(String),
 }
 
 impl fmt::Display for CompileError {
@@ -110,6 +112,9 @@ impl fmt::Display for CompileError {
                 second.display()
             ),
             Self::Manifest(message) => write!(formatter, "invalid application manifest: {message}"),
+            Self::ClientManifest(message) => {
+                write!(formatter, "invalid client manifest: {message}")
+            }
         }
     }
 }
