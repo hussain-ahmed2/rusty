@@ -245,6 +245,11 @@ derived from file extensions, `Cache-Control: public, max-age=3600` in productio
 and `no-cache` in development. Loading boundaries, async handlers, client
 navigation, and deployment adapters remain future milestones.
 
+## Continuous integration
+
+GitHub Actions runs formatting, Clippy, the workspace tests, rustdoc with
+warnings denied, and a WASM check for the `rusty` crate test suite.
+
 ## Configuration
 
 `rusty.toml` is optional. Missing files and fields use these defaults:
