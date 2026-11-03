@@ -921,6 +921,11 @@ streaming bodies remain future work.
 
 ### WebAssembly client builds
 
+`rusty new <path> --client` scaffolds a separate `client` package with a
+`cdylib` target, sets `build.client_dir`, injects an `init()` module bootstrap
+into the root layout, and ignores `client/target`. Existing projects can opt in
+by setting `build.client_dir`.
+
 When `build.client_dir` is set, `rusty build` runs `cargo metadata` against that
 package, requires a `cdylib` target, and compiles it for
 `wasm32-unknown-unknown` with the same debug/release profile as the native build.
@@ -939,7 +944,8 @@ both `rusty build` and `rusty dev`.
 reserved `/_rusty/client` prefix. Requests are decoded and traversal-checked with
 the same rules as public assets, and receive the same MIME and cache headers.
 Custom routers can call `Router::client_dir`. The prefix is reserved for
-generated artifacts and is checked before public files.
+generated artifacts and is checked before public files. `CLIENT_URL_PREFIX` is
+shared with the bundle metadata so deployment adapters construct matching URLs.
 
 ### Deployment bundle
 
@@ -947,8 +953,11 @@ generated artifacts and is checked before public files.
 manifests, and a rewritten `rusty.toml` into `<out_dir>/dist`. The rewritten
 configuration uses `out_dir = "."` and `public_dir = "public"` so the bundle runs
 from its own directory with the client mounted at `/_rusty/client`. The bundle
-also contains `deployment.json` with the executable name and available artifact
-groups. The directory is written through a temporary sibling and then swapped
+also contains `deployment.json` with the executable name, available artifact
+groups, the client URL prefix, and the client entrypoint. When client artifacts
+are present, the bundle validates `client-manifest.json`, checks each recorded
+size against the generated file, and fails rather than publishing a mismatched
+client. The directory is written through a temporary sibling and then swapped
 into place, so a failed copy does not leave a partial bundle. Symlinks are
 skipped when copying public and client files.
 
@@ -998,9 +1007,10 @@ atomic rename behavior belongs to the production build pipeline.
 The CLI uses a small hand-written parser rather than a dependency. Commands are
 explicit and return a typed report for printing by the binary:
 
-- `rusty new <path>` creates a single-crate application, refuses non-empty
-  destinations, derives a sanitized crate name, and points the facade dependency
-  at the workspace source checkout.
+- `rusty new <path> [--client]` creates a single-crate application, refuses
+  non-empty destinations, derives a sanitized crate name, points the facade
+  dependency at the workspace source checkout, and optionally scaffolds a
+  WebAssembly client package with a layout bootstrap.
 - `rusty check [--project <path>]` analyzes without writing.
 - `rusty generate [--project <path>]` analyzes and writes the manifest under the
   configured output directory.

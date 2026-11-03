@@ -3,7 +3,7 @@
 //! The CLI deliberately keeps its parser small and dependency-free:
 //!
 //! ```text
-//! rusty new <path>
+//! rusty new <path> [--client]
 //! rusty check [--project <path>]
 //! rusty generate [--project <path>]
 //! rusty build [--project <path>] [--release]
@@ -42,7 +42,7 @@ pub const HELP: &str = "\
 rusty - build and inspect Rusty applications
 
 Usage:
-  rusty new <path>                  Create a new Rusty application
+  rusty new <path> [--client]       Create a new Rusty application
   rusty check [--project <path>]    Analyze routes and server functions
   rusty generate [--project <path>] Write the application manifest
   rusty build [--project <path>] [--release]
@@ -70,6 +70,8 @@ pub enum Command {
     New {
         /// Destination directory.
         path: PathBuf,
+        /// Whether to scaffold a WebAssembly client package.
+        client: bool,
     },
     /// Analyzes an application without writing files.
     Check {
@@ -273,25 +275,21 @@ fn parse_new(arguments: &[String]) -> Result<Command, CliError> {
         return Ok(Command::Help);
     }
 
-    let path = match arguments {
-        [path] if !path.starts_with('-') => PathBuf::from(path),
-        [path] => {
-            return Err(CliError::Usage(format!(
-                "invalid new-project path `{path}`"
-            )))
-        }
-        [] => {
-            return Err(CliError::Usage(
-                "new requires a destination path".to_owned(),
-            ))
-        }
-        _ => {
+    let mut path = None;
+    let mut client = false;
+    for argument in arguments {
+        if argument == "--client" {
+            client = true;
+        } else if argument.starts_with('-') {
+            return Err(CliError::Usage(format!("unexpected argument `{argument}`")));
+        } else if path.replace(PathBuf::from(argument)).is_some() {
             return Err(CliError::Usage(
                 "new accepts exactly one destination path".to_owned(),
-            ))
+            ));
         }
-    };
-    Ok(Command::New { path })
+    }
+    let path = path.ok_or_else(|| CliError::Usage("new requires a destination path".to_owned()))?;
+    Ok(Command::New { path, client })
 }
 
 fn parse_project(arguments: &[String], generate: bool) -> Result<Command, CliError> {
@@ -471,7 +469,7 @@ pub fn execute(command: Command) -> Result<Report, CliError> {
     match command {
         Command::Help => Ok(Report::new(HELP)),
         Command::Version => Ok(Report::new(format!("rusty {VERSION}"))),
-        Command::New { path } => create_project(&path),
+        Command::New { path, client } => create_project(&path, client),
         Command::Check { project } => {
             let compiler = AppCompiler::from_project(&project)?;
             let manifest = compiler.analyze()?;
@@ -581,8 +579,9 @@ fn run_cargo(project: &Path, command: &str, release: bool) -> Result<(), CliErro
     }
 }
 
-fn create_project(path: &Path) -> Result<Report, CliError> {
+fn create_project(path: &Path, client: bool) -> Result<Report, CliError> {
     let name = crate_name(path)?;
+    let client_target = format!("{}_client", name.replace('-', "_"));
     prepare_destination(path)?;
 
     write_file(
@@ -592,9 +591,16 @@ fn create_project(path: &Path) -> Result<Report, CliError> {
             facade_dependency()
         ),
     )?;
+    let client_dir = if client {
+        "client_dir = \"client\"\n"
+    } else {
+        ""
+    };
     write_file(
         &path.join("rusty.toml"),
-        "[app]\nsource_root = \"src\"\napp_dir = \"src/app\"\npublic_dir = \"public\"\n\n[build]\nout_dir = \"target/rusty\"\n\n[dev]\nhost = \"127.0.0.1\"\nport = 3000\n",
+        &format!(
+            "[app]\nsource_root = \"src\"\napp_dir = \"src/app\"\npublic_dir = \"public\"\n\n[build]\nout_dir = \"target/rusty\"\n{client_dir}\n[dev]\nhost = \"127.0.0.1\"\nport = 3000\n"
+        ),
     )?;
     write_file(&path.join("build.rs"), BUILD_SCRIPT)?;
     write_file(
@@ -603,15 +609,35 @@ fn create_project(path: &Path) -> Result<Report, CliError> {
             "//! {name}\n\n#![forbid(unsafe_code)]\n\n#[rusty::app]\nmod app {{}}\n\nfn main() -> Result<(), rusty::app::ServeError> {{\n    app::serve()\n}}\n"
         ),
     )?;
-    write_file(&path.join("src/app/layout.rs"), ROOT_LAYOUT)?;
+    if client {
+        let entrypoint = format!("{client_target}.js");
+        let layout = ROOT_LAYOUT_CLIENT.replace("__CLIENT_ENTRYPOINT__", &entrypoint);
+        write_file(&path.join("src/app/layout.rs"), &layout)?;
+        write_file(
+            &path.join("client/Cargo.toml"),
+            &format!(
+                "[package]\nname = \"{name}-client\"\nversion = \"0.1.0\"\nedition = \"2021\"\nrust-version = \"1.75\"\n\n[workspace]\n\n[lib]\nname = \"{client_target}\"\ncrate-type = [\"cdylib\", \"rlib\"]\n\n[dependencies]\nrusty = {}\nwasm-bindgen = \"0.2\"\n",
+                facade_dependency()
+            ),
+        )?;
+        write_file(&path.join("client/src/lib.rs"), CLIENT_LIB)?;
+        write_file(&path.join(".gitignore"), "/target\n/client/target\n")?;
+    } else {
+        write_file(&path.join("src/app/layout.rs"), ROOT_LAYOUT)?;
+        write_file(&path.join(".gitignore"), "/target\n")?;
+    }
     write_file(&path.join("src/app/page.rs"), HOME_PAGE)?;
     write_file(&path.join("src/app/not_found.rs"), NOT_FOUND_PAGE)?;
     write_file(&path.join("src/app/api/health/route.rs"), HEALTH_ROUTE)?;
     write_file(&path.join("public/robots.txt"), PUBLIC_ROBOTS)?;
-    write_file(&path.join(".gitignore"), "/target\n")?;
 
     Ok(Report::new(format!(
-        "Created Rusty application at {}.",
+        "Created Rusty application{} at {}.",
+        if client {
+            " with a WebAssembly client"
+        } else {
+            ""
+        },
         path.display()
     )))
 }
@@ -655,6 +681,58 @@ pub fn layout(children: Children) -> Element {
             </html>
         },
     ])
+}
+"#;
+
+const ROOT_LAYOUT_CLIENT: &str = r#"//! Root layout.
+
+use rusty::prelude::*;
+
+/// Wraps every page in the application document.
+pub fn layout(children: Children) -> Element {
+    Element::fragment([
+        Element::raw_html("<!doctype html>"),
+        view! {
+            <html>
+                <head>
+                    <title>"Rusty app"</title>
+                    {Element::raw_html("<script type=\"module\">import init from \"/_rusty/client/__CLIENT_ENTRYPOINT__\"; init();</script>")}
+                </head>
+                <body>{children}</body>
+            </html>
+        },
+    ])
+}
+"#;
+
+const CLIENT_LIB: &str = r#"//! Browser client bootstrap.
+
+#![forbid(unsafe_code)]
+
+use rusty::prelude::*;
+
+fn counter(count: Signal<u32>) -> Element {
+    let handler_count = count.clone();
+
+    view! {
+        <aside>
+            <h2>"Rusty client"</h2>
+            <button on:click={move |_| {
+                handler_count.set(handler_count.get() + 1);
+            }}>"Increment"</button>
+            <p>{count}</p>
+        </aside>
+    }
+}
+
+/// Starts the browser client.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    let count = Signal::new(0_u32);
+    let root = rusty::client::mount_to_body(move || counter(count.clone()))
+        .expect("failed to mount the Rusty client");
+    std::mem::forget(root);
 }
 "#;
 

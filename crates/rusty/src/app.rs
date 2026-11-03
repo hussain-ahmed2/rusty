@@ -10,6 +10,7 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
+pub use rusty_config::CLIENT_URL_PREFIX;
 use rusty_config::{ConfigError, RustyConfig};
 use rusty_core::{Children, Element};
 use rusty_rpc::{RpcError, RpcRegistry, ServerInvoker};
@@ -108,9 +109,6 @@ impl PageRoute {
 }
 
 type RpcRegistration = fn(&mut RpcRegistry) -> Result<(), RpcError>;
-
-/// URL prefix for generated WebAssembly client artifacts.
-pub const CLIENT_URL_PREFIX: &str = "/_rusty/client";
 
 /// An application route table assembled by `#[rusty::app]`.
 #[derive(Clone, Default)]

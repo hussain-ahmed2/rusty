@@ -45,7 +45,15 @@ fn parses_commands_and_usage_errors() {
     assert_eq!(
         rusty_cli::parse(["new", "demo"]).expect("new"),
         Command::New {
-            path: PathBuf::from("demo")
+            path: PathBuf::from("demo"),
+            client: false,
+        }
+    );
+    assert_eq!(
+        rusty_cli::parse(["new", "--client", "demo"]).expect("new client"),
+        Command::New {
+            path: PathBuf::from("demo"),
+            client: true,
         }
     );
     assert_eq!(
@@ -123,6 +131,10 @@ fn parses_commands_and_usage_errors() {
         Err(CliError::Usage(message)) if message.contains("exactly one")
     ));
     assert!(matches!(
+        rusty_cli::parse(["new", "one", "--bogus"]),
+        Err(CliError::Usage(message)) if message.contains("unexpected")
+    ));
+    assert!(matches!(
         rusty_cli::parse(["check", "--project"]),
         Err(CliError::Usage(message)) if message.contains("requires")
     ));
@@ -169,6 +181,10 @@ fn scaffolds_a_project_and_analyzes_it() {
     assert!(project.join("src/app/api/health/route.rs").is_file());
     assert!(project.join("public/robots.txt").is_file());
     assert!(project.join(".gitignore").is_file());
+    assert!(!project.join("client").exists());
+    assert!(!fs::read_to_string(project.join("rusty.toml"))
+        .expect("rusty.toml")
+        .contains("client_dir"));
 
     let main = fs::read_to_string(project.join("src/main.rs")).expect("main");
     assert!(main.contains("#[rusty::app]"));
@@ -202,6 +218,35 @@ fn scaffolds_a_project_and_analyzes_it() {
     assert!(manifest.server_functions().is_empty());
     assert_eq!(manifest.assets().len(), 1);
     assert_eq!(manifest.assets()[0].url(), "/robots.txt");
+}
+
+#[test]
+fn scaffolds_a_project_with_a_client() {
+    let directory = TempDir::new("client");
+    let project = directory.path.join("client-app");
+
+    let report =
+        rusty_cli::run(["new", project.to_str().expect("utf8"), "--client"]).expect("create");
+    assert!(report.message().contains("WebAssembly client"));
+
+    let config = fs::read_to_string(project.join("rusty.toml")).expect("rusty.toml");
+    assert!(config.contains("client_dir = \"client\""));
+    let client = fs::read_to_string(project.join("client/Cargo.toml")).expect("client Cargo.toml");
+    assert!(client.contains("name = \"client-app-client\""));
+    assert!(client.contains("name = \"client_app_client\""));
+    assert!(client.contains("crate-type = [\"cdylib\", \"rlib\"]"));
+    assert!(project.join("client/src/lib.rs").is_file());
+    let layout = fs::read_to_string(project.join("src/app/layout.rs")).expect("layout");
+    assert!(layout.contains("/_rusty/client/client_app_client.js"));
+    let ignore = fs::read_to_string(project.join(".gitignore")).expect("gitignore");
+    assert!(ignore.contains("/client/target"));
+
+    rusty_cli::run([
+        "check".to_owned(),
+        "--project".to_owned(),
+        project.display().to_string(),
+    ])
+    .expect("check");
 }
 
 #[test]

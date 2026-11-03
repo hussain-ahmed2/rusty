@@ -3,8 +3,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rusty_compiler::{CLIENT_MANIFEST_FILE, MANIFEST_FILE};
-use rusty_config::RustyConfig;
+use rusty_compiler::{ClientManifest, CLIENT_MANIFEST_FILE, MANIFEST_FILE};
+use rusty_config::{RustyConfig, CLIENT_URL_PREFIX};
 use serde::Serialize;
 
 use crate::{cargo, CliError};
@@ -24,6 +24,8 @@ struct DeploymentManifest {
     executable: String,
     app_manifest: String,
     client_manifest: Option<String>,
+    client_url_prefix: String,
+    client_entrypoint: Option<String>,
     public: bool,
     client: bool,
 }
@@ -135,18 +137,35 @@ fn populate(
     fs::copy(&app_manifest, temporary.join(MANIFEST_FILE))
         .map_err(|error| crate::io_error(&app_manifest, &error))?;
     let client_manifest = out_dir.join(CLIENT_MANIFEST_FILE);
-    let client_manifest_copied = if client_copied {
+    let client_entrypoint = if client_copied {
         if !client_manifest.is_file() {
             return Err(CliError::Bundle(format!(
                 "client manifest is missing at {}",
                 client_manifest.display()
             )));
         }
+        let json = fs::read_to_string(&client_manifest)
+            .map_err(|error| crate::io_error(&client_manifest, &error))?;
+        let manifest = ClientManifest::from_json(&json)
+            .map_err(|error| CliError::Bundle(error.to_string()))?;
+        for file in manifest.files() {
+            let path = client.join(file.path());
+            let bytes = fs::metadata(&path)
+                .map_err(|error| crate::io_error(&path, &error))?
+                .len();
+            if bytes != file.bytes() {
+                return Err(CliError::Bundle(format!(
+                    "client artifact `{}` is {bytes} bytes; the manifest records {}",
+                    file.path().display(),
+                    file.bytes()
+                )));
+            }
+        }
         fs::copy(&client_manifest, temporary.join(CLIENT_MANIFEST_FILE))
             .map_err(|error| crate::io_error(&client_manifest, &error))?;
-        true
+        Some(manifest.entrypoint().to_owned())
     } else {
-        false
+        None
     };
 
     let mut deploy_config = config.clone();
@@ -162,7 +181,11 @@ fn populate(
         version: BUNDLE_VERSION,
         executable: executable_name,
         app_manifest: MANIFEST_FILE.to_owned(),
-        client_manifest: client_manifest_copied.then(|| CLIENT_MANIFEST_FILE.to_owned()),
+        client_manifest: client_entrypoint
+            .as_ref()
+            .map(|_| CLIENT_MANIFEST_FILE.to_owned()),
+        client_url_prefix: CLIENT_URL_PREFIX.to_owned(),
+        client_entrypoint,
         public: public_copied,
         client: client_copied,
     };
@@ -231,6 +254,8 @@ mod tests {
         }
     }
 
+    use rusty_compiler::{ClientFile, ClientManifest};
+
     #[test]
     fn writes_a_standalone_bundle_and_replaces_stale_output() {
         let project = TempDir::new("project");
@@ -243,7 +268,15 @@ mod tests {
         fs::write(out_dir.join("app-manifest.json"), "{}").expect("app manifest");
         fs::create_dir_all(out_dir.join("client")).expect("client dir");
         fs::write(out_dir.join("client/demo.js"), "client").expect("client");
-        fs::write(out_dir.join("client-manifest.json"), "{}").expect("client manifest");
+        let client_manifest = ClientManifest::new(
+            "demo-client",
+            "demo.js",
+            vec![ClientFile::new("demo.js", 6, "0123456789abcdef")],
+        )
+        .expect("client manifest");
+        client_manifest
+            .write_to(out_dir.join("client-manifest.json"))
+            .expect("write client manifest");
         fs::create_dir_all(project.path.join("public/assets")).expect("public dir");
         fs::write(project.path.join("public/assets/site.css"), "body{}").expect("asset");
         fs::create_dir_all(out_dir.join("dist")).expect("stale dist");
@@ -283,6 +316,8 @@ mod tests {
             fs::read_to_string(bundle.path.join("deployment.json")).expect("deployment");
         assert!(deployment.contains("\"client\": true"));
         assert!(deployment.contains("\"public\": true"));
+        assert!(deployment.contains("\"clientUrlPrefix\": \"/_rusty/client\""));
+        assert!(deployment.contains("\"clientEntrypoint\": \"demo.js\""));
     }
 
     #[test]
@@ -304,6 +339,7 @@ mod tests {
         assert!(deployment.contains("\"client\": false"));
         assert!(deployment.contains("\"public\": false"));
         assert!(deployment.contains("\"clientManifest\": null"));
+        assert!(deployment.contains("\"clientEntrypoint\": null"));
     }
 
     #[test]

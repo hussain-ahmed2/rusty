@@ -34,6 +34,9 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+/// URL prefix for generated WebAssembly client artifacts.
+pub const CLIENT_URL_PREFIX: &str = "/_rusty/client";
+
 use serde::{Deserialize, Serialize};
 
 /// The default configuration file name.

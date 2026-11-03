@@ -234,7 +234,8 @@ are registered automatically from their declared module paths.
 
 Every application must include a build script that emits
 `cargo:rerun-if-changed` for `src` so Cargo re-expands the macro when routes
-are added, removed, or changed. `rusty new` generates one.
+are added, removed, or changed. `rusty new` generates one; `rusty new --client`
+also scaffolds a WebAssembly client package and its layout bootstrap.
 
 The development supervisor runs the application with `cargo run`, sets
 `RUSTY_DEV=1`, and restarts it when `.rs`, `Cargo.toml`, or `rusty.toml` files
@@ -276,7 +277,10 @@ counts. `rusty build` writes the asset manifest before compiling.
 
 ### WebAssembly client builds
 
-Set `build.client_dir` to a Cargo package with a `cdylib` target:
+`rusty new <path> --client` creates a client package, adds `client_dir = "client"`
+to `rusty.toml`, injects the module bootstrap into the root layout, and ignores
+`client/target`. Existing projects can opt in by setting `build.client_dir` to a
+Cargo package with a `cdylib` target:
 
 ```toml
 [build]
@@ -316,9 +320,11 @@ target/rusty/dist/
 └── client/
 ```
 
-The runtime configuration uses relative paths, so running the executable from
-the bundle directory serves `public/` and the generated client without editing
-the original project config. Platform-specific adapters remain future work.
+The bundle validates `client-manifest.json` against the copied client artifacts
+and records `clientUrlPrefix` and `clientEntrypoint` in `deployment.json`. The
+runtime configuration uses relative paths, so running the executable from the
+bundle directory serves `public/` and the generated client without editing the
+original project config. Platform-specific adapters remain future work.
 
 ## License
 
