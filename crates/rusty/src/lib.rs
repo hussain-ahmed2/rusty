@@ -130,7 +130,7 @@ pub use rusty_core::{
 };
 pub use rusty_dom::{Dom, DomError, MockDom};
 pub use rusty_hydrate::{HydrationError, HydrationSession, HYDRATION_STATE_ID};
-pub use rusty_macros::{component, server, view};
+pub use rusty_macros::{app, component, server, view};
 pub use rusty_reactivity::{
     batch, create_effect, create_root, expect_context, memo, on_cleanup, provide_context, signal,
     untrack, use_context, Effect, Memo, Owner, Signal,
@@ -245,6 +245,10 @@ pub mod server {
     pub use rusty_server::*;
 }
 
+/// File-based application runtime used by `#[rusty::app]`.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod app;
+
 /// Typed server-function runtime.
 pub mod rpc {
     pub use rusty_rpc::*;
@@ -348,15 +352,8 @@ pub mod client {
 /// use rusty::prelude::*;
 /// ```
 pub mod prelude {
-    #[cfg(not(target_arch = "wasm32"))]
     pub use crate::{
-        authenticate, csrf, require_auth, AuthIdentity, Authenticator, BearerAuthenticator,
-        CsrfMiddleware, CsrfToken, Extensions, Handler, Headers, HttpRouter, Method, Middleware,
-        Next, Request, RequestContext, Response, RpcRegistry, ServerError, ServerInvoker,
-        StatusCode, CSRF_COOKIE, CSRF_HEADER,
-    };
-    pub use crate::{
-        batch, component, create_effect, create_root, expect_context, memo, on_cleanup,
+        app, batch, component, create_effect, create_root, expect_context, memo, on_cleanup,
         provide_context, render_hydrated, render_to_string, server, signal, untrack, use_context,
         view, ApiRoute, ApiRouteMatch, Attribute, AttributeName, AttributeValue, Children,
         ClientRenderError, Component, Dom, DomError, Effect, Element, Event, EventListener,
@@ -365,5 +362,12 @@ pub mod prelude {
         Owner, ReactiveRoot, RenderError, Renderer, RouteEntry, RouteManifest, RouteMatch,
         RouteParams, RoutePattern, RouteSegment, RouterError, RpcClient, RpcError, ServerFunction,
         Signal, TagName, Transport, VNode, VNodeError, HYDRATION_STATE_ID,
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use crate::{
+        authenticate, csrf, require_auth, AuthIdentity, Authenticator, BearerAuthenticator,
+        CsrfMiddleware, CsrfToken, Extensions, Handler, Headers, HttpRouter, Method, Middleware,
+        Next, Request, RequestContext, Response, RpcRegistry, ServerError, ServerInvoker,
+        StatusCode, CSRF_COOKIE, CSRF_HEADER,
     };
 }

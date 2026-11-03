@@ -44,6 +44,7 @@ fn defaults_apply_when_sections_and_fields_are_missing() {
 
     assert_eq!(config.app.source_root, PathBuf::from("src"));
     assert_eq!(config.app.app_dir, PathBuf::from("src/app"));
+    assert_eq!(config.app.public_dir, PathBuf::from("public"));
     assert_eq!(config.build.out_dir, PathBuf::from("target/rusty"));
     assert_eq!(config.dev.host, "127.0.0.1");
     assert_eq!(config.dev.port, 4100);
@@ -71,6 +72,10 @@ fn unknown_fields_and_invalid_values_are_rejected() {
         Err(ConfigError::Invalid { field, .. }) if field == "app.source_root"
     ));
     assert!(matches!(
+        RustyConfig::parse("[app]\npublic_dir = \"../public\"\n"),
+        Err(ConfigError::Invalid { field, .. }) if field == "app.public_dir"
+    ));
+    assert!(matches!(
         RustyConfig::parse("[build]\nout_dir = \"/tmp/out\"\n"),
         Err(ConfigError::Invalid { field, .. }) if field == "build.out_dir"
     ));
@@ -83,6 +88,7 @@ fn configuration_round_trips_through_toml() {
         [app]
         source_root = "app"
         app_dir = "app/pages"
+        public_dir = "static"
 
         [build]
         out_dir = "dist/rusty"

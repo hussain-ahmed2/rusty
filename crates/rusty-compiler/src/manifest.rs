@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::CompileError;
 
 /// The current application manifest format version.
-pub const MANIFEST_VERSION: u32 = 1;
+pub const MANIFEST_VERSION: u32 = 2;
 
 /// A discovered `#[server]` function.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +57,39 @@ impl ServerFunction {
     }
 }
 
+/// A file served from the public directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Asset {
+    path: PathBuf,
+    url: String,
+    bytes: u64,
+}
+
+impl Asset {
+    pub(crate) fn new(path: PathBuf, url: String, bytes: u64) -> Self {
+        Self { path, url, bytes }
+    }
+
+    /// Returns the file path relative to the public directory.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns the URL path the asset is served from.
+    #[must_use]
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// Returns the asset size in bytes.
+    #[must_use]
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
 /// A complete build-time analysis of a Rusty application.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,6 +98,7 @@ pub struct AppManifest {
     source_root: PathBuf,
     routes: RouteManifest,
     server_functions: Vec<ServerFunction>,
+    assets: Vec<Asset>,
 }
 
 impl AppManifest {
@@ -72,12 +106,14 @@ impl AppManifest {
         source_root: PathBuf,
         routes: RouteManifest,
         server_functions: Vec<ServerFunction>,
+        assets: Vec<Asset>,
     ) -> Self {
         Self {
             version: MANIFEST_VERSION,
             source_root,
             routes,
             server_functions,
+            assets,
         }
     }
 
@@ -103,6 +139,12 @@ impl AppManifest {
     #[must_use]
     pub fn server_functions(&self) -> &[ServerFunction] {
         &self.server_functions
+    }
+
+    /// Returns the static assets found under the public directory.
+    #[must_use]
+    pub fn assets(&self) -> &[Asset] {
+        &self.assets
     }
 
     /// Serializes the manifest as compact JSON.
@@ -165,6 +207,40 @@ impl AppManifest {
             return Err(CompileError::Manifest(
                 "the source root cannot be empty".to_owned(),
             ));
+        }
+
+        let mut asset_urls = BTreeMap::<&str, &PathBuf>::new();
+        for asset in &self.assets {
+            if asset.path.as_os_str().is_empty() {
+                return Err(CompileError::Manifest(
+                    "a public asset is missing its path".to_owned(),
+                ));
+            }
+            if asset.path.is_absolute()
+                || asset
+                    .path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                return Err(CompileError::Manifest(format!(
+                    "public asset path `{}` must be relative and cannot contain `..`",
+                    asset.path.display()
+                )));
+            }
+            if !asset.url.starts_with('/') || asset.url.contains(['?', '#']) {
+                return Err(CompileError::Manifest(format!(
+                    "public asset URL `{}` must start with `/` and cannot contain a query or fragment",
+                    asset.url
+                )));
+            }
+            if let Some(first) = asset_urls.insert(&asset.url, &asset.path) {
+                return Err(CompileError::Manifest(format!(
+                    "duplicate public asset URL `{}` for {} and {}",
+                    asset.url,
+                    first.display(),
+                    asset.path.display()
+                )));
+            }
         }
 
         let mut seen = BTreeMap::<&str, &PathBuf>::new();

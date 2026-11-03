@@ -3,6 +3,13 @@
 version = 3
 
 [[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "rusty",
+]
+
+[[package]]
 name = "browser"
 version = "0.1.0"
 dependencies = [
@@ -180,6 +187,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 name = "rusty"
 version = "0.1.0"
 dependencies = [
+ "rusty-config",
  "rusty-core",
  "rusty-dom",
  "rusty-hydrate",
@@ -252,6 +260,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "rusty-compiler",
  "rusty-core",
  "syn 2.0.119",
 ]

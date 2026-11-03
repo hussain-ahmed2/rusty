@@ -1,8 +1,9 @@
-//! Development diagnostics server with polling-based manifest regeneration.
+//! Development process supervision and polling-based manifest diagnostics.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -24,12 +25,108 @@ struct DevState {
     generation: u64,
 }
 
-/// A running development diagnostics server.
+/// Runs an application with rebuild-on-change for development.
+#[derive(Debug, Clone)]
+pub struct DevRunner {
+    project: PathBuf,
+    host: Option<String>,
+    port: Option<u16>,
+}
+
+impl DevRunner {
+    /// Creates a development process supervisor.
+    #[must_use]
+    pub fn new(project: impl Into<PathBuf>, host: Option<String>, port: Option<u16>) -> Self {
+        Self {
+            project: project.into(),
+            host,
+            port,
+        }
+    }
+
+    /// Runs the application and restarts it when watched files change.
+    ///
+    /// The application is started with `cargo run` and `RUSTY_DEV=1`. When the
+    /// application exits on its own, the supervisor waits for the next change
+    /// before restarting it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when `cargo` cannot be started or the project
+    /// snapshot cannot be read.
+    pub fn run(self) -> Result<(), CliError> {
+        let root = self.project.clone();
+        let mut snapshot = snapshot_project(&root).map_err(|error| io_error(&root, &error))?;
+        let mut child = Some(self.spawn()?);
+        println!(
+            "Rusty dev is watching {}; press Ctrl-C to stop.",
+            root.display()
+        );
+
+        loop {
+            thread::sleep(POLL_INTERVAL);
+            match snapshot_project(&root) {
+                Ok(next) if next != snapshot => {
+                    snapshot = next;
+                    if let Some(mut child) = child.take() {
+                        stop(&mut child);
+                    }
+                    child = Some(self.spawn()?);
+                }
+                Ok(_) => {
+                    if let Some(status) = child.as_mut().and_then(wait_status) {
+                        eprintln!("application exited with {status}; waiting for changes");
+                        child = None;
+                    }
+                }
+                Err(error) => {
+                    eprintln!("cannot watch {}: {error}", root.display());
+                }
+            }
+        }
+    }
+
+    fn spawn(&self) -> Result<Child, CliError> {
+        let mut command = Command::new("cargo");
+        command
+            .arg("run")
+            .arg("--quiet")
+            .current_dir(&self.project)
+            .env("RUSTY_DEV", "1");
+        if let Some(host) = &self.host {
+            command.env("RUSTY_HOST", host);
+        }
+        if let Some(port) = self.port {
+            command.env("RUSTY_PORT", port.to_string());
+        }
+        command.spawn().map_err(|error| CliError::Io {
+            path: PathBuf::from("cargo"),
+            message: error.to_string(),
+        })
+    }
+}
+
+fn wait_status(child: &mut Child) -> Option<ExitStatus> {
+    child.try_wait().ok().flatten()
+}
+
+fn stop(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn io_error(path: &Path, error: &std::io::Error) -> CliError {
+    CliError::Io {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    }
+}
+
+/// A standalone development manifest server.
 ///
-/// The server analyzes the project, serves the current manifest and status, and
-/// polls source files for changes. Regeneration is intentionally separate from
-/// application route dispatch, which still requires compiler-generated runtime
-/// registration.
+/// `rusty dev` now runs the application itself. This server remains available to
+/// tooling that only needs manifest analysis, status JSON, and a diagnostics
+/// dashboard without executing application code.
 #[derive(Debug)]
 pub struct DevServer {
     compiler: AppCompiler,
@@ -185,6 +282,7 @@ fn status_response(state: &Arc<RwLock<DevState>>, project: &Path) -> Response {
         "routes": manifest.map_or(0, |manifest| manifest.routes().len()),
         "apiRoutes": manifest.map_or(0, |manifest| manifest.routes().api_len()),
         "serverFunctions": manifest.map_or(0, |manifest| manifest.server_functions().len()),
+        "assets": manifest.map_or(0, |manifest| manifest.assets().len()),
         "error": state.error,
     });
     Response::json(StatusCode::OK, payload.to_string())
@@ -231,11 +329,12 @@ fn dashboard_response(state: &Arc<RwLock<DevState>>, project: &Path) -> Response
         }
         (None, Some(manifest)) => {
             body.push_str(&format!(
-                "<p>Generation {}: {} page route(s), {} API route(s), {} server function(s).</p>",
+                "<p>Generation {}: {} page route(s), {} API route(s), {} server function(s), and {} asset(s).</p>",
                 state.generation,
                 manifest.routes().len(),
                 manifest.routes().api_len(),
-                manifest.server_functions().len()
+                manifest.server_functions().len(),
+                manifest.assets().len()
             ));
         }
         (None, None) => body.push_str("<p>No manifest has been generated yet.</p>"),

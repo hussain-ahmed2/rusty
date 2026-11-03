@@ -16,6 +16,7 @@ members = [
     "crates/rusty-server",
     "crates/rusty-vdom",
     "crates/rusty-ssr",
+    "examples/app",
     "examples/browser",
     "examples/full-stack",
     "examples/hello-world",

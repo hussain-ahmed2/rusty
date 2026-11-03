@@ -90,6 +90,8 @@ fn full_project(label: &str) -> Project {
         pub fn ignored() -> Result<(), RpcError> { Ok(()) }
         "#,
     );
+    project.write("public/logo.svg", "<svg></svg>\n");
+    project.write("public/fonts/site.css", "body { color: black; }\n");
     project
 }
 
@@ -102,6 +104,10 @@ fn analyzes_routes_and_server_functions() {
     assert_eq!(manifest.source_root(), Path::new("src"));
     assert_eq!(manifest.routes().len(), 2);
     assert_eq!(manifest.routes().api_len(), 1);
+    assert_eq!(manifest.assets().len(), 2);
+    assert_eq!(manifest.assets()[0].url(), "/fonts/site.css");
+    assert_eq!(manifest.assets()[0].path(), Path::new("fonts/site.css"));
+    assert_eq!(manifest.assets()[0].bytes(), 23);
 
     let pages = manifest
         .routes()
@@ -254,7 +260,7 @@ fn rejects_unknown_manifest_versions() {
     let json = manifest
         .to_json()
         .expect("serialize")
-        .replace("\"version\":1", "\"version\":99");
+        .replace("\"version\":2", "\"version\":99");
 
     let error = rusty_compiler::AppManifest::from_json(&json).expect_err("version");
     assert!(matches!(error, CompileError::Manifest(message) if message.contains("version")));

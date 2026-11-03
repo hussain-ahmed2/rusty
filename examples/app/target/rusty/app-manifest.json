@@ -1,0 +1,66 @@
+{
+  "version": 2,
+  "source_root": "src",
+  "routes": {
+    "routes": [
+      {
+        "pattern": {
+          "segments": []
+        },
+        "page": "page.rs",
+        "layouts": [
+          "layout.rs"
+        ],
+        "not_found": "not_found.rs"
+      },
+      {
+        "pattern": {
+          "segments": [
+            {
+              "kind": "static",
+              "value": "about"
+            }
+          ]
+        },
+        "page": "about/page.rs",
+        "layouts": [
+          "layout.rs"
+        ],
+        "not_found": "not_found.rs"
+      }
+    ],
+    "api_routes": [
+      {
+        "pattern": {
+          "segments": [
+            {
+              "kind": "static",
+              "value": "api"
+            },
+            {
+              "kind": "static",
+              "value": "health"
+            }
+          ]
+        },
+        "route": "api/health/route.rs"
+      }
+    ],
+    "not_found": "not_found.rs"
+  },
+  "server_functions": [
+    {
+      "name": "echo",
+      "path": "/api/echo",
+      "module": "crate::rpc",
+      "source": "src/rpc.rs"
+    }
+  ],
+  "assets": [
+    {
+      "path": "robots.txt",
+      "url": "/robots.txt",
+      "bytes": 24
+    }
+  ]
+}

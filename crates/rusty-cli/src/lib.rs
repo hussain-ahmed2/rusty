@@ -6,13 +6,15 @@
 //! rusty new <path>
 //! rusty check [--project <path>]
 //! rusty generate [--project <path>]
+//! rusty build [--project <path>] [--release]
+//! rusty start [--project <path>] [--release]
 //! rusty dev [--project <path>] [--host <host>] [--port <port>]
 //! ```
 //!
 //! `check` analyzes routes and server functions without writing files.
 //! `generate` writes the analyzed application manifest under the configured
-//! output directory. `dev` serves live manifest diagnostics and regenerates the
-//! manifest as source files change.
+//! output directory. `build` compiles the application, `start` runs it, and
+//! `dev` rebuilds and restarts it when source files change.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -21,6 +23,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
 use rusty_compiler::{AppCompiler, CompileError};
 use rusty_config::{ConfigError, RustyConfig};
@@ -28,7 +31,7 @@ use rusty_server::ServerError;
 
 mod dev;
 
-pub use dev::DevServer;
+pub use dev::{DevRunner, DevServer};
 
 /// The top-level help text shown by `rusty --help`.
 pub const HELP: &str = "\
@@ -38,8 +41,12 @@ Usage:
   rusty new <path>                  Create a new Rusty application
   rusty check [--project <path>]    Analyze routes and server functions
   rusty generate [--project <path>] Write the application manifest
+  rusty build [--project <path>] [--release]
+                                    Compile the application
+  rusty start [--project <path>] [--release]
+                                    Run the compiled application
   rusty dev [--project <path>] [--host <host>] [--port <port>]
-                                    Serve live manifest diagnostics
+                                    Run with rebuild-on-change
   rusty help                        Show this help
   rusty --version                   Show the CLI version
 
@@ -70,7 +77,21 @@ pub enum Command {
         /// Project root.
         project: PathBuf,
     },
-    /// Serves live manifest diagnostics and watches for changes.
+    /// Compiles the application with Cargo.
+    Build {
+        /// Project root.
+        project: PathBuf,
+        /// Whether to compile with optimizations.
+        release: bool,
+    },
+    /// Runs the application with Cargo.
+    Start {
+        /// Project root.
+        project: PathBuf,
+        /// Whether to run the release binary.
+        release: bool,
+    },
+    /// Runs the application and restarts it when source files change.
     Dev {
         /// Project root.
         project: PathBuf,
@@ -135,6 +156,13 @@ pub enum CliError {
     Compile(CompileError),
     /// The development server failed.
     Server(String),
+    /// A child command exited unsuccessfully.
+    CommandFailed {
+        /// The command that failed.
+        command: String,
+        /// The process exit status, when available.
+        status: Option<i32>,
+    },
 }
 
 impl CliError {
@@ -165,6 +193,10 @@ impl fmt::Display for CliError {
             Self::Config(error) => error.fmt(formatter),
             Self::Compile(error) => error.fmt(formatter),
             Self::Server(message) => write!(formatter, "server error: {message}"),
+            Self::CommandFailed { command, status } => match status {
+                Some(status) => write!(formatter, "`{command}` failed with status {status}"),
+                None => write!(formatter, "`{command}` failed"),
+            },
         }
     }
 }
@@ -219,6 +251,8 @@ where
         "new" => parse_new(&arguments[1..]),
         "check" => parse_project(&arguments[1..], false),
         "generate" => parse_project(&arguments[1..], true),
+        "build" => parse_build(&arguments[1..], false),
+        "start" => parse_build(&arguments[1..], true),
         "dev" => parse_dev(&arguments[1..]),
         other => Err(CliError::Usage(format!("unknown command `{other}`"))),
     }
@@ -290,6 +324,57 @@ fn parse_project(arguments: &[String], generate: bool) -> Result<Command, CliErr
         Command::Generate { project }
     } else {
         Command::Check { project }
+    })
+}
+
+fn parse_build(arguments: &[String], start: bool) -> Result<Command, CliError> {
+    if arguments.iter().any(|argument| is_help(argument)) {
+        return Ok(Command::Help);
+    }
+
+    let mut project = None;
+    let mut release = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = &arguments[index];
+        if argument == "--release" {
+            release = true;
+            index += 1;
+            continue;
+        }
+        if argument == "--project" {
+            let Some(value) = arguments.get(index + 1) else {
+                return Err(CliError::Usage(
+                    "--project requires a directory path".to_owned(),
+                ));
+            };
+            if value.starts_with('-') {
+                return Err(CliError::Usage(
+                    "--project requires a directory path".to_owned(),
+                ));
+            }
+            project = Some(PathBuf::from(value));
+            index += 2;
+            continue;
+        }
+        if let Some(value) = argument.strip_prefix("--project=") {
+            if value.is_empty() {
+                return Err(CliError::Usage(
+                    "--project requires a directory path".to_owned(),
+                ));
+            }
+            project = Some(PathBuf::from(value));
+            index += 1;
+            continue;
+        }
+        return Err(CliError::Usage(format!("unexpected argument `{argument}`")));
+    }
+
+    let project = project.unwrap_or_else(|| PathBuf::from("."));
+    Ok(if start {
+        Command::Start { project, release }
+    } else {
+        Command::Build { project, release }
     })
 }
 
@@ -381,10 +466,11 @@ pub fn execute(command: Command) -> Result<Report, CliError> {
             let compiler = AppCompiler::from_project(&project)?;
             let manifest = compiler.analyze()?;
             Ok(Report::new(format!(
-                "Checked {} page route(s), {} API route(s), and {} server function(s) in {}.",
+                "Checked {} page route(s), {} API route(s), {} server function(s), and {} asset(s) in {}.",
                 manifest.routes().len(),
                 manifest.routes().api_len(),
                 manifest.server_functions().len(),
+                manifest.assets().len(),
                 compiler.project_root().display()
             )))
         }
@@ -393,12 +479,30 @@ pub fn execute(command: Command) -> Result<Report, CliError> {
             let manifest = compiler.analyze()?;
             compiler.write_manifest(&manifest)?;
             Ok(Report::new(format!(
-                "Wrote {} with {} page route(s), {} API route(s), and {} server function(s).",
+                "Wrote {} with {} page route(s), {} API route(s), {} server function(s), and {} asset(s).",
                 compiler.manifest_path().display(),
                 manifest.routes().len(),
                 manifest.routes().api_len(),
-                manifest.server_functions().len()
+                manifest.server_functions().len(),
+                manifest.assets().len()
             )))
+        }
+        Command::Build { project, release } => {
+            let compiler = AppCompiler::from_project(&project)?;
+            let manifest = compiler.analyze()?;
+            compiler.write_manifest(&manifest)?;
+            run_cargo(&project, "build", release)?;
+            Ok(Report::new(format!(
+                "Built Rusty application in {} and wrote {}.",
+                project.display(),
+                compiler.manifest_path().display()
+            )))
+        }
+        Command::Start { project, release } => {
+            let config = RustyConfig::load(&project)?;
+            config.validate()?;
+            run_cargo(&project, "run", release)?;
+            Ok(Report::new("Rusty application stopped."))
         }
         Command::Dev {
             project,
@@ -406,21 +510,15 @@ pub fn execute(command: Command) -> Result<Report, CliError> {
             port,
         } => {
             let mut config = RustyConfig::load(&project)?;
-            if let Some(host) = host {
+            if let Some(host) = host.clone() {
                 config.dev.host = host;
             }
             if let Some(port) = port {
                 config.dev.port = port;
             }
             config.validate()?;
-            let server = DevServer::bind(&project, config)?;
-            let address = server.local_addr()?;
-            println!("Rusty dev server listening on http://{address}");
-            if let Some(error) = server.initial_error() {
-                eprintln!("analysis error: {error}");
-            }
-            server.run()?;
-            Ok(Report::new("Rusty dev server stopped."))
+            DevRunner::new(project, host, port).run()?;
+            Ok(Report::new("Rusty dev stopped."))
         }
     }
 }
@@ -438,6 +536,27 @@ where
     execute(parse(arguments)?)
 }
 
+fn run_cargo(project: &Path, command: &str, release: bool) -> Result<(), CliError> {
+    let mut process = ProcessCommand::new("cargo");
+    process.arg(command).arg("--quiet");
+    if release {
+        process.arg("--release");
+    }
+    process.current_dir(project);
+    let status = process.status().map_err(|error| CliError::Io {
+        path: PathBuf::from("cargo"),
+        message: error.to_string(),
+    })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(CliError::CommandFailed {
+            command: format!("cargo {command}"),
+            status: status.code(),
+        })
+    }
+}
+
 fn create_project(path: &Path) -> Result<Report, CliError> {
     let name = crate_name(path)?;
     prepare_destination(path)?;
@@ -445,28 +564,26 @@ fn create_project(path: &Path) -> Result<Report, CliError> {
     write_file(
         &path.join("Cargo.toml"),
         &format!(
-            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\nrust-version = \"1.75\"\n\n[dependencies]\nrusty = {}\n\n[workspace]\n",
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\nrust-version = \"1.75\"\nbuild = \"build.rs\"\n\n[dependencies]\nrusty = {}\n\n[workspace]\n",
             facade_dependency()
         ),
     )?;
     write_file(
         &path.join("rusty.toml"),
-        "[app]\nsource_root = \"src\"\napp_dir = \"src/app\"\n\n[build]\nout_dir = \"target/rusty\"\n\n[dev]\nhost = \"127.0.0.1\"\nport = 3000\n",
+        "[app]\nsource_root = \"src\"\napp_dir = \"src/app\"\npublic_dir = \"public\"\n\n[build]\nout_dir = \"target/rusty\"\n\n[dev]\nhost = \"127.0.0.1\"\nport = 3000\n",
     )?;
+    write_file(&path.join("build.rs"), BUILD_SCRIPT)?;
     write_file(
         &path.join("src/main.rs"),
         &format!(
-            "//! {name}\n\n#![forbid(unsafe_code)]\n\nfn main() {{\n    println!(\"Hello from {name}!\");\n}}\n"
+            "//! {name}\n\n#![forbid(unsafe_code)]\n\n#[rusty::app]\nmod app {{}}\n\nfn main() -> Result<(), rusty::app::ServeError> {{\n    app::serve()\n}}\n"
         ),
     )?;
-    write_file(
-        &path.join("src/app/page.rs"),
-        "//! Home page.\n\n/// Renders the home page.\npub fn page() -> &'static str {\n    \"Hello from Rusty!\"\n}\n",
-    )?;
-    write_file(
-        &path.join("src/app/api/health/route.rs"),
-        "//! Health check endpoint.\n\n/// Returns the current health status.\npub fn GET() -> &'static str {\n    \"ok\"\n}\n",
-    )?;
+    write_file(&path.join("src/app/layout.rs"), ROOT_LAYOUT)?;
+    write_file(&path.join("src/app/page.rs"), HOME_PAGE)?;
+    write_file(&path.join("src/app/not_found.rs"), NOT_FOUND_PAGE)?;
+    write_file(&path.join("src/app/api/health/route.rs"), HEALTH_ROUTE)?;
+    write_file(&path.join("public/robots.txt"), PUBLIC_ROBOTS)?;
     write_file(&path.join(".gitignore"), "/target\n")?;
 
     Ok(Report::new(format!(
@@ -474,6 +591,92 @@ fn create_project(path: &Path) -> Result<Report, CliError> {
         path.display()
     )))
 }
+
+const BUILD_SCRIPT: &str = r#"//! Tracks file-based routes so Cargo re-expands `#[rusty::app]` after changes.
+
+use std::fs;
+use std::path::Path;
+
+fn main() {
+    println!("cargo:rerun-if-changed=rusty.toml");
+    visit(Path::new("src"));
+}
+
+fn visit(path: &Path) {
+    println!("cargo:rerun-if-changed={}", path.display());
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            visit(&path);
+        }
+    }
+}
+"#;
+
+const ROOT_LAYOUT: &str = r#"//! Root layout.
+
+use rusty::prelude::*;
+
+/// Wraps every page in the application document.
+pub fn layout(children: Children) -> Element {
+    Element::fragment([
+        Element::raw_html("<!doctype html>"),
+        view! {
+            <html>
+                <head><title>"Rusty app"</title></head>
+                <body>{children}</body>
+            </html>
+        },
+    ])
+}
+"#;
+
+const HOME_PAGE: &str = r#"//! Home page.
+
+use rusty::prelude::*;
+
+/// Renders the home page.
+pub fn page(_context: &mut RequestContext) -> Result<Element, ServerError> {
+    Ok(view! {
+        <main>
+            <h1>"Hello from Rusty!"</h1>
+        </main>
+    })
+}
+"#;
+
+const NOT_FOUND_PAGE: &str = r#"//! Application not-found page.
+
+use rusty::prelude::*;
+
+/// Renders the not-found page.
+pub fn not_found() -> Element {
+    view! {
+        <main>
+            <h1>"Not found"</h1>
+            <p><a href="/">"Back home"</a></p>
+        </main>
+    }
+}
+"#;
+
+const PUBLIC_ROBOTS: &str = "User-agent: *\nDisallow:\n";
+
+const HEALTH_ROUTE: &str = r##"//! Health check endpoint.
+
+use rusty::prelude::*;
+
+/// Returns the current health status.
+pub fn get(_context: &mut RequestContext) -> Result<Response, ServerError> {
+    Ok(Response::json(
+        StatusCode::OK,
+        r#"{"status":"ok"}"#.to_owned(),
+    ))
+}
+"##;
 
 fn prepare_destination(path: &Path) -> Result<(), CliError> {
     match fs::metadata(path) {

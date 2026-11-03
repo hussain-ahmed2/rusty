@@ -16,5 +16,6 @@ workspace = true
 [dependencies]
 proc-macro2.workspace = true
 quote.workspace = true
+rusty-compiler.workspace = true
 rusty-core.workspace = true
 syn.workspace = true

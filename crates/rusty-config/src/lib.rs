@@ -15,6 +15,7 @@
 //! [app]
 //! source_root = "src"
 //! app_dir = "src/app"
+//! public_dir = "public"
 //!
 //! [build]
 //! out_dir = "target/rusty"
@@ -103,6 +104,9 @@ pub struct AppConfig {
     /// Directory containing `page.rs`, `layout.rs`, and `route.rs` files,
     /// relative to the project root. Defaults to `src/app`.
     pub app_dir: PathBuf,
+    /// Directory containing static assets served at the site root, relative to
+    /// the project root. Defaults to `public`.
+    pub public_dir: PathBuf,
 }
 
 impl Default for AppConfig {
@@ -110,6 +114,7 @@ impl Default for AppConfig {
         Self {
             source_root: PathBuf::from("src"),
             app_dir: PathBuf::from("src/app"),
+            public_dir: PathBuf::from("public"),
         }
     }
 }
@@ -254,6 +259,7 @@ impl RustyConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         validate_relative("app.source_root", &self.app.source_root)?;
         validate_relative("app.app_dir", &self.app.app_dir)?;
+        validate_relative("app.public_dir", &self.app.public_dir)?;
         validate_relative("build.out_dir", &self.build.out_dir)?;
         if self.dev.host.trim().is_empty() {
             return Err(ConfigError::Invalid {

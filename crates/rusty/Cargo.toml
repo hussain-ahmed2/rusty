@@ -23,4 +23,5 @@ rusty-ssr.workspace = true
 rusty-vdom.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rusty-config.workspace = true
 rusty-server.workspace = true

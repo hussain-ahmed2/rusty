@@ -4,6 +4,7 @@
 //!
 //! - file-system routes and API routes from [`rusty_router::RouteManifest`];
 //! - `#[server]` function declarations parsed from Rust source with `syn`;
+//! - static files under the configured public directory;
 //! - the configured source root and manifest format version.
 //!
 //! ```no_run
@@ -18,6 +19,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod assets;
 mod error;
 mod manifest;
 mod server;
@@ -29,7 +31,7 @@ use rusty_config::RustyConfig;
 use rusty_router::RouteManifest;
 
 pub use error::CompileError;
-pub use manifest::{AppManifest, ServerFunction, MANIFEST_VERSION};
+pub use manifest::{AppManifest, Asset, ServerFunction, MANIFEST_VERSION};
 
 /// The file name used for generated application manifests.
 pub const MANIFEST_FILE: &str = "app-manifest.json";
@@ -108,6 +110,12 @@ impl AppCompiler {
         self.project_root.join(&self.config.app.source_root)
     }
 
+    /// Returns the resolved public asset directory.
+    #[must_use]
+    pub fn public_dir(&self) -> PathBuf {
+        self.project_root.join(&self.config.app.public_dir)
+    }
+
     /// Returns the generated manifest path under the configured output
     /// directory.
     #[must_use]
@@ -142,10 +150,12 @@ impl AppCompiler {
 
         let routes = RouteManifest::discover(&app_dir)?;
         let server_functions = server::discover(&self.project_root, &source_root)?;
+        let assets = assets::discover(&self.public_dir())?;
         Ok(AppManifest::new(
             self.config.app.source_root.clone(),
             routes,
             server_functions,
+            assets,
         ))
     }
 

@@ -95,6 +95,20 @@ fn parses_commands_and_usage_errors() {
             port: Some(4100),
         }
     );
+    assert_eq!(
+        rusty_cli::parse(["build", "--project", "app", "--release"]).expect("build"),
+        Command::Build {
+            project: PathBuf::from("app"),
+            release: true,
+        }
+    );
+    assert_eq!(
+        rusty_cli::parse(["start", "--project=app"]).expect("start"),
+        Command::Start {
+            project: PathBuf::from("app"),
+            release: false,
+        }
+    );
 
     assert!(matches!(
         rusty_cli::parse(["unknown"]),
@@ -147,10 +161,21 @@ fn scaffolds_a_project_and_analyzes_it() {
     assert!(cargo.contains("rusty = { path ="));
     assert!(cargo.contains("edition = \"2021\""));
     assert!(project.join("rusty.toml").is_file());
+    assert!(project.join("build.rs").is_file());
     assert!(project.join("src/main.rs").is_file());
+    assert!(project.join("src/app/layout.rs").is_file());
     assert!(project.join("src/app/page.rs").is_file());
+    assert!(project.join("src/app/not_found.rs").is_file());
     assert!(project.join("src/app/api/health/route.rs").is_file());
+    assert!(project.join("public/robots.txt").is_file());
     assert!(project.join(".gitignore").is_file());
+
+    let main = fs::read_to_string(project.join("src/main.rs")).expect("main");
+    assert!(main.contains("#[rusty::app]"));
+    assert!(main.contains("app::serve()"));
+    let route =
+        fs::read_to_string(project.join("src/app/api/health/route.rs")).expect("health route");
+    assert!(route.contains("pub fn get("));
 
     let checked = rusty_cli::run([
         "check".to_owned(),
@@ -161,6 +186,7 @@ fn scaffolds_a_project_and_analyzes_it() {
     assert!(checked.message().contains("1 page route(s)"));
     assert!(checked.message().contains("1 API route(s)"));
     assert!(checked.message().contains("0 server function(s)"));
+    assert!(checked.message().contains("1 asset(s)"));
 
     let generated = rusty_cli::run([
         "generate".to_owned(),
@@ -174,6 +200,8 @@ fn scaffolds_a_project_and_analyzes_it() {
     assert_eq!(manifest.routes().len(), 1);
     assert_eq!(manifest.routes().api_len(), 1);
     assert!(manifest.server_functions().is_empty());
+    assert_eq!(manifest.assets().len(), 1);
+    assert_eq!(manifest.assets()[0].url(), "/robots.txt");
 }
 
 #[test]

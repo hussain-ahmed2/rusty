@@ -43,6 +43,13 @@ pub enum CompileError {
         /// A description of the problem.
         message: String,
     },
+    /// A public asset has an invalid path or URL.
+    InvalidAsset {
+        /// The asset file.
+        path: PathBuf,
+        /// A description of the problem.
+        message: String,
+    },
     /// Two server functions declare the same path.
     DuplicateServerPath {
         /// The duplicated path.
@@ -82,6 +89,13 @@ impl fmt::Display for CompileError {
                 write!(
                     formatter,
                     "invalid server function at {}: {message}",
+                    path.display()
+                )
+            }
+            Self::InvalidAsset { path, message } => {
+                write!(
+                    formatter,
+                    "invalid public asset at {}: {message}",
                     path.display()
                 )
             }
