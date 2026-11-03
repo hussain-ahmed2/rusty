@@ -27,7 +27,7 @@ WebAssembly client builds through `wasm-bindgen`.
 - [x] Development rebuild-and-restart loop with file watching
 - [x] Blocking HTTP/1.1 transport with bounded headers and bodies
 - [x] Public static asset serving and validated build-time asset manifests
-- [x] WebAssembly client builds with fingerprinted client manifests
+- [x] WebAssembly client builds and automatic client asset serving
 - [ ] Loading boundaries, async handlers, and streaming SSR
 - [ ] Deployment adapters
 
@@ -287,8 +287,13 @@ client_dir = "client"
 entrypoint plus every artifact's path, size, and content fingerprint. The
 `wasm-bindgen` CLI must be installed; set `RUSTY_WASM_BINDGEN` to use a different
 executable. `rusty dev` builds the client at startup and rebuilds it when client
-sources, Cargo manifests, or `rusty.toml` change. `RUSTY_HOST` and `RUSTY_PORT`
-override the configured dev bind address.
+sources, Cargo manifests, or `rusty.toml` change.
+
+`serve()` and `serve_with()` expose the generated directory at
+`/_rusty/client/`, for example `/_rusty/client/demo_client.js`. The prefix is
+reserved for generated artifacts. Custom routers built from `router()` can opt
+in with `.client_dir(...)`. `RUSTY_HOST` and `RUSTY_PORT` override the configured
+dev bind address.
 
 ## License
 

@@ -80,7 +80,8 @@ remain immediately recognizable.
 **Status:** Milestone 8 in progress. Configuration, application analysis, the
 CLI commands, compiler-generated runtime registration, page/API/RPC dispatch,
 development restart-on-change, native build/start, static public assets,
-build-time asset manifests, and WebAssembly client builds are complete. Loading
+build-time asset manifests, WebAssembly client builds, and generated client
+serving are complete. Loading
 boundaries, async handlers, and deployment adapters remain.
 
 ### Milestone 1 — Foundation (complete)
@@ -264,6 +265,7 @@ Deliverables completed:
   application manifest.
 - WebAssembly client builds through Cargo and `wasm-bindgen`, with a separate
   fingerprinted client artifact manifest.
+- Runtime serving of generated client artifacts under `/_rusty/client/`.
 - Recursive build-script tracking so route additions and removals re-expand the
   application macro.
 - Root-layout application to not-found pages, with fallback document generation
@@ -929,6 +931,12 @@ entrypoint, and every artifact's relative path, size, and FNV-1a fingerprint.
 Client artifact names are not rewritten for cache busting; deployment adapters
 can use the manifest fingerprints when publishing. Client compilation runs in
 both `rusty build` and `rusty dev`.
+
+`serve()` and `serve_with()` attach `<out_dir>/client` to the router at the
+reserved `/_rusty/client` prefix. Requests are decoded and traversal-checked with
+the same rules as public assets, and receive the same MIME and cache headers.
+Custom routers can call `Router::client_dir`. The prefix is reserved for
+generated artifacts and is checked before public files.
 
 ### Development process supervision
 

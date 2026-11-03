@@ -244,6 +244,47 @@ fn serves_public_assets_with_content_types_and_caching() {
 }
 
 #[test]
+fn serves_generated_client_artifacts_under_the_reserved_prefix() {
+    let client = TempDir::new("client");
+    fs::write(client.path.join("demo_client.js"), "export default {};").expect("script");
+    fs::write(client.path.join("demo_client_bg.wasm"), b"\0asm").expect("wasm");
+
+    let router = Router::new().client_dir(&client.path);
+    let response = router
+        .handle(Request::new(Method::Get, "/_rusty/client/demo_client.js"))
+        .expect("client script");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.body(), b"export default {};");
+    assert_eq!(
+        response.headers().get("content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+
+    let response = router
+        .handle(Request::new(
+            Method::Get,
+            "/_rusty/client/demo_client_bg.wasm",
+        ))
+        .expect("client wasm");
+    assert_eq!(
+        response.headers().get("content-type"),
+        Some("application/wasm")
+    );
+
+    for target in [
+        "/_rusty/client/../secret",
+        "/_rusty/client/%2e%2e/secret",
+        "/_rusty/clientish/demo_client.js",
+        "/demo_client.js",
+    ] {
+        let response = router
+            .handle(Request::new(Method::Get, target))
+            .expect("missing client asset");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{target}");
+    }
+}
+
+#[test]
 fn static_files_reject_traversal_and_fall_back_to_not_found() {
     let public = TempDir::new("public-traversal");
     fs::write(public.path.join("hello.txt"), "hello").expect("asset");

@@ -8,17 +8,27 @@ use rusty_server::{Method, Request, Response, StatusCode};
 #[derive(Clone, Debug)]
 pub(crate) struct StaticFiles {
     root: PathBuf,
+    prefix: &'static str,
     cache_control: &'static str,
 }
 
 impl StaticFiles {
     pub(crate) fn load(path: &Path, cache_control: &'static str) -> Option<Self> {
+        Self::load_with_prefix(path, "", cache_control)
+    }
+
+    pub(crate) fn load_with_prefix(
+        path: &Path,
+        prefix: &'static str,
+        cache_control: &'static str,
+    ) -> Option<Self> {
         let root = fs::canonicalize(path).ok()?;
         if !root.is_dir() {
             return None;
         }
         Some(Self {
             root,
+            prefix,
             cache_control,
         })
     }
@@ -28,7 +38,16 @@ impl StaticFiles {
             return None;
         }
         let path = decode_path(request.path())?;
-        let relative = relative_path(&path)?;
+        let path = if self.prefix.is_empty() {
+            path.as_str()
+        } else {
+            let path = path.strip_prefix(self.prefix)?;
+            if !path.starts_with('/') {
+                return None;
+            }
+            path
+        };
+        let relative = relative_path(path)?;
         let candidate = self.root.join(relative);
         let canonical = fs::canonicalize(candidate).ok()?;
         if !canonical.starts_with(&self.root) {

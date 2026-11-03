@@ -2,8 +2,8 @@
 //!
 //! The `#[rusty::app]` macro generates a module tree and calls these types to
 //! register page modules, API route modules, layouts, and error boundaries.
-//! Static files from the configured public directory are served as a fallback
-//! after application routes.
+//! Static files from the configured public directory and generated WebAssembly
+//! client artifacts are served as a fallback after application routes.
 
 use std::env;
 use std::error::Error;
@@ -109,6 +109,9 @@ impl PageRoute {
 
 type RpcRegistration = fn(&mut RpcRegistry) -> Result<(), RpcError>;
 
+/// URL prefix for generated WebAssembly client artifacts.
+pub const CLIENT_URL_PREFIX: &str = "/_rusty/client";
+
 /// An application route table assembled by `#[rusty::app]`.
 #[derive(Clone, Default)]
 pub struct Router {
@@ -117,6 +120,7 @@ pub struct Router {
     rpcs: Vec<RpcRegistration>,
     not_found: Option<NotFoundRoute>,
     public_dir: Option<PathBuf>,
+    client_dir: Option<PathBuf>,
     diagnostics: bool,
 }
 
@@ -180,6 +184,17 @@ impl Router {
     #[must_use]
     pub fn public_dir(mut self, directory: impl Into<PathBuf>) -> Self {
         self.public_dir = Some(directory.into());
+        self
+    }
+
+    /// Serves generated WebAssembly client artifacts below
+    /// [`CLIENT_URL_PREFIX`].
+    ///
+    /// A missing directory disables client serving. Relative paths resolve
+    /// against the current working directory when the router is built.
+    #[must_use]
+    pub fn client_dir(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.client_dir = Some(directory.into());
         self
     }
 
@@ -266,9 +281,18 @@ impl Router {
             .public_dir
             .as_deref()
             .and_then(|path| assets::StaticFiles::load(path, cache_control));
-        if self.not_found.is_some() || static_files.is_some() {
+        let client_files = self.client_dir.as_deref().and_then(|path| {
+            assets::StaticFiles::load_with_prefix(path, CLIENT_URL_PREFIX, cache_control)
+        });
+        if self.not_found.is_some() || static_files.is_some() || client_files.is_some() {
             let not_found = self.not_found.clone();
             router = router.fallback(move |context| {
+                if let Some(response) = client_files
+                    .as_ref()
+                    .and_then(|client_files| client_files.serve(context.request()))
+                {
+                    return Ok(response);
+                }
                 if let Some(response) = static_files
                     .as_ref()
                     .and_then(|static_files| static_files.serve(context.request()))
@@ -475,7 +499,11 @@ fn config_from_env() -> Result<RustyConfig, ServeError> {
 /// Returns a server error when the listener cannot bind or the server fails.
 pub fn serve_with(router: Router, config: &RustyConfig) -> Result<(), ServeError> {
     config.validate()?;
-    let http = router.public_dir(&config.app.public_dir).build()?;
+    let client_dir = config.build.out_dir.join("client");
+    let http = router
+        .public_dir(&config.app.public_dir)
+        .client_dir(client_dir)
+        .build()?;
     let server = HttpServer::bind((config.dev.host.as_str(), config.dev.port))?;
     let address = server.local_addr()?;
     println!("Rusty listening on http://{address}");
