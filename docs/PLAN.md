@@ -71,13 +71,16 @@ remain immediately recognizable.
 | `rusty-rpc` | Typed server functions | M7 |
 | `rusty-metadata` | SEO and metadata | M9 |
 | `rusty-compiler` | Application analysis and code generation | M8 |
-| `rusty-build` | Native/WASM build orchestration | M8 |
-| `rusty-cli` | `rusty new`, `dev`, `build`, `start`, `generate` | M8 |
+| `rusty-build` | Native/WASM build orchestration (planned) | M8 |
+| `rusty-cli` | `new`, `check`, `generate`; `dev`, `build`, `start` planned | M8 |
 | `rusty-config` | `rusty.toml` parsing and validation | M8 |
 
 ## Milestones
 
-**Status:** Milestone 7 complete. Next: Milestone 8 — Compiler and tooling.
+**Status:** Milestone 8 in progress. Configuration, application analysis, the
+first CLI commands, an HTTP transport, and a development diagnostics server are
+complete; compiler-generated runtime dispatch, hot reload, and production builds
+remain.
 
 ### Milestone 1 — Foundation (complete)
 
@@ -227,10 +230,37 @@ Explicit non-goals for M7: TCP/HTTP transport adapters, async handlers,
 WebSocket subscriptions, compression, streaming, rate limiting, database
 integrations, and compiler-generated registration.
 
-### Milestone 8 — Compiler and tooling
+### Milestone 8 — Compiler and tooling (in progress)
 
-Application compilation, server/client dependency analysis, `rusty.toml`, CLI,
-development server, file watching, hot reload, and production builds.
+Deliverables completed in the first slice:
+
+- Optional `rusty.toml` with typed `[app]`, `[build]`, and `[dev]` sections,
+  defaults, unknown-field rejection, and relative-path validation.
+- `AppCompiler`, which combines page/API route discovery with source analysis
+  and produces a versioned `AppManifest`.
+- `#[server]` discovery over Rust source using `syn`, including default paths,
+  literal and `path = "..."` forms, module-path inference, and duplicate-path
+  rejection.
+- Validated manifest JSON serialization, disk writes, and restoration.
+- `rusty new`, `rusty check`, and `rusty generate`, with project scaffolding,
+  non-empty-directory protection, and a local facade dependency.
+- A native tooling example that analyzes its own routes and server functions.
+- A blocking HTTP/1.1 TCP transport with bounded header/body sizes, timeouts,
+  scoped connection threads, and safe handler-error responses.
+- `rusty dev` with a live diagnostics dashboard, manifest/status JSON endpoints,
+  and polling-based manifest regeneration.
+
+Remaining for Milestone 8:
+
+- Page/API handler contracts and compiler-generated runtime registration.
+- Server/client dependency analysis and compiler-generated entry points.
+- Application route dispatch and hot reload in `rusty dev`.
+- Native and WASM production build orchestration.
+- `rusty build` and `rusty start`.
+- Empty-directory and incremental build behavior for larger applications.
+
+Explicit non-goals for the current slice: async handlers, streaming SSR,
+database integrations, and deployment adapters.
 
 ### Milestone 9 — Production features
 
@@ -763,3 +793,108 @@ A manifest serializes to JSON and is validated again when restored. Validation
 rechecks segment rules and duplicate route shapes, so a malformed artifact fails
 loudly. Route matching scans the manifest and returns the most specific match as
 a `RouteMatch` containing the entry and typed parameters.
+
+## Milestone 8 architecture
+
+### Configuration
+
+Configuration is loaded from `<project>/rusty.toml`. A missing file returns the
+defaults rather than an error, so convention-driven applications stay
+zero-config. TOML documents use `deny_unknown_fields` at every level, which turns
+typos into parse errors instead of silently ignored settings.
+
+Paths are validated as non-empty relative paths without `..` components. The
+config crate does not touch the filesystem beyond reading the TOML file; the
+compiler reports missing application or source directories with their resolved
+paths. The development host and port are validated but are not yet consumed by a
+server.
+
+### Application analysis
+
+`AppCompiler` joins two independent analyses. `RouteManifest::discover` handles
+the `src/app` conventions from Milestone 6. A source walk then parses every `.rs`
+file under the configured source root with `syn` and records functions carrying a
+`#[server]` attribute.
+
+Server function paths accept `#[server]`, `#[server("/path")]`, and
+`#[server(path = "/path")]`. Module paths are inferred from the file path
+(`src/rpc.rs` becomes `crate::rpc`) and inline modules (`mod nested`) are
+appended. Root `lib.rs` and `main.rs` map to `crate`, and `src/bin` is ignored
+because it contains separate binary crate roots. Duplicate server paths are
+rejected before a manifest is produced.
+
+The compiler performs structural analysis only. It does not type-check function
+bodies, analyze native/client dependencies, or generate entry-point code; those
+remain later Milestone 8 work.
+
+### HTTP transport
+
+`HttpServer` turns the transport-neutral HTTP types into a working TCP adapter.
+It accepts origin-form HTTP/1.0 and HTTP/1.1 requests, requires
+`Content-Length` for request bodies, and closes the connection after one
+response. Chunked bodies and HTTP/2 are rejected with explicit status codes
+rather than partially supported.
+
+The request line and headers are read incrementally with a hard size cap, so a
+client cannot force an unbounded allocation before framing is known. Body sizes
+are checked before allocation. Read and write timeouts default to 30 seconds and
+are configurable through `ServerConfig`.
+
+Connections run on scoped threads without requiring `'static` handlers, which
+keeps a router borrowed for the lifetime of the accept loop. Handler errors with
+5xx status become a generic `internal server error` response so internal details
+do not leak; 4xx authentication and CSRF messages remain visible. A shutdown
+handle stops the non-blocking accept loop and waits for active scoped threads.
+
+TLS, keep-alive, chunked transfer encoding, request trailers, and HTTP/2 remain
+unimplemented and belong to later transport work.
+
+### Development diagnostics server
+
+`rusty dev` binds to the configured host and port, analyzes the project once, and
+writes the initial manifest. It serves an HTML dashboard at `/`, JSON status at
+`/__rusty/status`, the current manifest at `/__rusty/manifest`, and a plain-text
+health check at `/__rusty/health`.
+
+Analysis failures do not stop the server. The status endpoint reports `ok:
+false` with the error, the manifest endpoint returns `503`, and the dashboard
+renders the escaped error. A subsequent source change retries analysis and
+restores the manifest when successful.
+
+A background polling watcher snapshots `.rs`, `rusty.toml`, and `Cargo.toml`
+modification times and lengths every 250 milliseconds. `target`, `.git`, and
+`node_modules` are skipped. Any snapshot difference triggers a fresh analysis
+and manifest write. Polling keeps the implementation portable and dependency-free
+at the cost of latency; native file-system notifications can replace it later.
+
+The dev server deliberately does not dispatch application pages or API routes.
+Rust cannot call route functions from file paths without generated module
+registration, so that behavior waits for handler contracts and compiler output.
+
+### Manifest format
+
+`AppManifest` embeds the route manifest, the configured source root, and the
+sorted server-function catalog behind a format version. JSON restoration
+revalidates route patterns and duplicate shapes, checks the manifest version,
+and rejects empty names, modules, or source paths. Build artifacts therefore fail
+loudly when edited or produced by an incompatible compiler.
+
+Manifests are written atomically enough for development use: parent directories
+are created and the complete JSON string is written in one call. Incremental and
+atomic rename behavior belongs to the production build pipeline.
+
+### CLI
+
+The CLI uses a small hand-written parser rather than a dependency. Commands are
+explicit and return a typed report for printing by the binary:
+
+- `rusty new <path>` creates a single-crate application, refuses non-empty
+  destinations, derives a sanitized crate name, and points the facade dependency
+  at the workspace source checkout.
+- `rusty check [--project <path>]` analyzes without writing.
+- `rusty generate [--project <path>]` analyzes and writes the manifest under the
+  configured output directory.
+
+Usage errors exit with status 2; execution failures exit with status 1. The
+development server and build commands are intentionally absent until they can be
+implemented end to end.

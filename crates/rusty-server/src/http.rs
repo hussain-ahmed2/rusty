@@ -93,12 +93,20 @@ impl StatusCode {
     pub const METHOD_NOT_ALLOWED: Self = Self(405);
     /// `409 Conflict`.
     pub const CONFLICT: Self = Self(409);
+    /// `413 Payload Too Large`.
+    pub const PAYLOAD_TOO_LARGE: Self = Self(413);
     /// `422 Unprocessable Entity`.
     pub const UNPROCESSABLE_ENTITY: Self = Self(422);
+    /// `431 Request Header Fields Too Large`.
+    pub const REQUEST_HEADER_FIELDS_TOO_LARGE: Self = Self(431);
     /// `500 Internal Server Error`.
     pub const INTERNAL_SERVER_ERROR: Self = Self(500);
+    /// `501 Not Implemented`.
+    pub const NOT_IMPLEMENTED: Self = Self(501);
     /// `503 Service Unavailable`.
     pub const SERVICE_UNAVAILABLE: Self = Self(503);
+    /// `505 HTTP Version Not Supported`.
+    pub const HTTP_VERSION_NOT_SUPPORTED: Self = Self(505);
 
     /// Creates a status code in the `100..=599` range.
     ///
@@ -142,9 +150,11 @@ impl StatusCode {
             415 => "Unsupported Media Type",
             422 => "Unprocessable Entity",
             429 => "Too Many Requests",
+            431 => "Request Header Fields Too Large",
             500 => "Internal Server Error",
             501 => "Not Implemented",
             503 => "Service Unavailable",
+            505 => "HTTP Version Not Supported",
             _ => return None,
         })
     }
@@ -280,6 +290,25 @@ impl Request {
             target: target.into(),
             headers: Headers::new(),
             body: Vec::new(),
+        }
+    }
+
+    /// Creates a request from already-parsed parts.
+    ///
+    /// Header values in `headers` are assumed to have been validated by
+    /// [`Headers`].
+    #[must_use]
+    pub fn from_parts(
+        method: Method,
+        target: impl Into<String>,
+        headers: Headers,
+        body: Vec<u8>,
+    ) -> Self {
+        Self {
+            method,
+            target: target.into(),
+            headers,
+            body,
         }
     }
 

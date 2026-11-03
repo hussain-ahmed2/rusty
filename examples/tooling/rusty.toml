@@ -1,0 +1,6 @@
+[app]
+source_root = "src"
+app_dir = "src/app"
+
+[build]
+out_dir = "target/rusty"

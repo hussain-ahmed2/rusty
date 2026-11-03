@@ -2,9 +2,9 @@
 //!
 //! `rusty-server` provides typed HTTP methods, status codes, headers, requests,
 //! and responses, plus method-aware routing, middleware, bearer
-//! authentication, and double-submit-cookie CSRF protection. It does not open
-//! sockets; a network adapter can translate any HTTP transport into
-//! [`Request`] and write [`Response`] back.
+//! authentication, and double-submit-cookie CSRF protection. The optional
+//! [`HttpServer`] transport adapter parses HTTP/1.0 and HTTP/1.1 requests over
+//! TCP and writes [`Response`] values back to the socket.
 //!
 //! ```
 //! use rusty_server::{HttpRouter, Method, Request, Response, StatusCode};
@@ -31,6 +31,7 @@ mod error;
 mod http;
 mod middleware;
 mod router;
+mod transport;
 
 pub use auth::{authenticate, require_auth, AuthIdentity, Authenticator, BearerAuthenticator};
 pub use context::{Extensions, RequestContext};
@@ -39,3 +40,4 @@ pub use error::ServerError;
 pub use http::{Headers, Method, Request, Response, StatusCode};
 pub use middleware::{Handler, Middleware, Next};
 pub use router::HttpRouter;
+pub use transport::{serve_connection, HttpServer, ServerConfig, ShutdownHandle};

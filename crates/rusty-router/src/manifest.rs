@@ -246,7 +246,15 @@ impl RouteManifest {
         });
     }
 
-    fn validate(&self) -> Result<(), RouterError> {
+    /// Validates route patterns, module paths, and duplicate URL shapes.
+    ///
+    /// Manifests loaded from untrusted JSON should be validated before use.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RouterError`] when a pattern is malformed, a module path is
+    /// missing, or two routes have the same URL shape.
+    pub fn validate(&self) -> Result<(), RouterError> {
         let mut seen = BTreeMap::<String, (String, PathBuf)>::new();
 
         for entry in &self.routes {

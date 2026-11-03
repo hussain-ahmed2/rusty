@@ -40,6 +40,12 @@ cargo run -p hello-world
 cargo run -p reactivity
 cargo run -p routing
 cargo run -p full-stack
+cargo run -q -p rusty-cli -- --help
+cargo run -q -p rusty-cli -- new /tmp/rusty-demo
+cargo run -q -p rusty-cli -- check --project /tmp/rusty-demo
+cargo run -q -p rusty-cli -- generate --project /tmp/rusty-demo
+cargo run -q -p rusty-cli -- dev --project /tmp/rusty-demo
+cargo run -q -p tooling
 rustup target add wasm32-unknown-unknown
 cargo build -p browser --target wasm32-unknown-unknown
 cargo build -p hydration --target wasm32-unknown-unknown
@@ -80,6 +86,16 @@ api  /api/health -> api/health/route.rs
 rpc  200 "Hello, Rusty!"
 me   200 anonymous
 csrf 403 CSRF token missing or invalid
+```
+
+Expected `tooling` output:
+
+```text
+pages 2 api 1 server 1
+/ -> page.rs
+/about -> about/page.rs
+/api/health -> api/health/route.rs (API)
+/_rusty/rpc/ping -> crate::rpc::ping (src/rpc.rs)
 ```
 
 The browser example is a counter with an `on:click` handler. From
@@ -146,6 +162,11 @@ pass nested content as `children`, even when the body is empty.
 | `rusty-renderer` | Client mounting, patching, hydration, and reactive roots |
 | `rusty-hydrate` | Hydration state serialization and restoration |
 | `rusty-router` | File-based route discovery, matching, and manifests |
+| `rusty-server` | HTTP runtime, HTTP/1.1 transport, middleware, auth, and CSRF |
+| `rusty-rpc` | Typed server functions and RPC clients |
+| `rusty-config` | `rusty.toml` parsing and validation |
+| `rusty-compiler` | Route, server-function, and manifest analysis |
+| `rusty-cli` | `rusty new`, `check`, and `generate` |
 
 ## Project conventions
 
@@ -166,9 +187,39 @@ src/app/
 ```
 
 Route discovery and manifests are implemented in Milestone 6. API handlers,
-compiler-generated entry points, and client navigation arrive in later
-milestones. A documentation site deployed through GitHub Pages is planned once
+server functions, and application analysis are implemented in Milestones 7 and
+8. The development server, file watcher, hot reload, and production build
+pipeline remain future work, as do compiler-generated entry points and client
+navigation. A documentation site deployed through GitHub Pages is planned once
 static generation exists.
+
+## Configuration
+
+`rusty.toml` is optional. Missing files and fields use these defaults:
+
+```toml
+[app]
+source_root = "src"
+app_dir = "src/app"
+
+[build]
+out_dir = "target/rusty"
+
+[dev]
+host = "127.0.0.1"
+port = 3000
+```
+
+Paths must be relative to the project root and cannot contain `..`. Unknown
+fields are rejected. A development port of `0` asks the operating system for an
+ephemeral port. `rusty check` analyzes the application without writing, while
+`rusty generate` writes `target/rusty/app-manifest.json`.
+
+`rusty dev` serves `/` as an HTML diagnostics dashboard, `/__rusty/status` and
+`/__rusty/manifest` as JSON, and `/__rusty/health` as a health check. It polls
+source files and regenerates the manifest as they change. Application route
+dispatch and hot reload are still pending compiler-generated runtime
+registration; the dev server currently serves diagnostics only.
 
 ## License
 

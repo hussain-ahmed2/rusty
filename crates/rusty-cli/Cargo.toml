@@ -1,0 +1,22 @@
+[package]
+name = "rusty-cli"
+description = "Command-line tooling for Rusty applications."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "rusty"
+path = "src/main.rs"
+doc = false
+
+[lints]
+workspace = true
+
+[dependencies]
+rusty-compiler.workspace = true
+rusty-config.workspace = true
+rusty-server.workspace = true
+serde_json.workspace = true
