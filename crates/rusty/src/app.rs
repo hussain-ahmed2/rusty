@@ -275,8 +275,8 @@ impl Router {
 
     /// Enables or disables gzip compression for complete responses.
     ///
-    /// Compression is enabled by default. Responses created with
-    /// [`Response::stream`] are not compressed.
+    /// Compression is enabled by default and applies to complete and streaming
+    /// responses.
     #[must_use]
     pub fn compression(mut self, enabled: bool) -> Self {
         self.compression = Some(enabled);

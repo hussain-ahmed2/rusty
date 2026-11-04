@@ -271,8 +271,9 @@ content-based `ETag` and `Last-Modified` headers, and requests with matching
 `If-None-Match` or `If-Modified-Since` receive `304 Not Modified` without a body.
 Complete text, JSON, JavaScript, SVG, XML, and WebAssembly responses larger than
 1 KiB are gzip-compressed when the client accepts gzip. Compressed responses add
-`Vary: Accept-Encoding` and use weak ETags. Streaming SSR responses pass through
-uncompressed. Application routers enable compression by default; disable it with
+`Vary: Accept-Encoding` and use weak ETags. Streaming responses are compressed
+as their chunks are produced. Application routers enable compression by default;
+disable it with
 `Router::compression(false)` or compose `compression()` into a custom `HttpRouter`.
 Async handlers, chunked SSR, loading boundaries, and same-origin client
 navigation are supported; platform-specific deployment adapters remain a future

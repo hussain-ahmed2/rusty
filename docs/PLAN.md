@@ -296,7 +296,7 @@ Static assets emit content-based `ETag` and `Last-Modified` headers and support
 `If-None-Match` and `If-Modified-Since` conditional requests. Complete text,
 JSON, JavaScript, SVG, XML, and WebAssembly responses larger than 1 KiB are
 gzip-compressed when negotiated, with `Vary: Accept-Encoding` and weak ETags.
-Streaming responses remain uncompressed. Route metadata from
+Streaming responses are compressed as their chunks are produced. Route metadata from
 `src/app/metadata.rs` is inherited and replaces static layout head tags. Static
 generation, image handling, and broader deployment support remain.
 The documentation website is generated from `examples/site` and deployed through

@@ -646,6 +646,25 @@ impl Response {
         matches!(self.body, ResponseBody::Stream(_))
     }
 
+    pub(crate) fn map_stream<F>(&mut self, map: F) -> bool
+    where
+        F: FnOnce(
+            Box<dyn Iterator<Item = Vec<u8>> + Send>,
+        ) -> Box<dyn Iterator<Item = Vec<u8>> + Send>,
+    {
+        let ResponseBody::Stream(stream) = &mut self.body else {
+            return false;
+        };
+        let chunks = stream.take_chunks();
+        stream.collected = OnceLock::new();
+        let mut current = stream
+            .chunks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *current = Some(map(chunks));
+        true
+    }
+
     /// Consumes the response and returns its parts.
     ///
     /// Streaming bodies are collected into a single byte vector.

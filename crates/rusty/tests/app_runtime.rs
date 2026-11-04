@@ -500,6 +500,18 @@ fn serves_conditional_asset_requests() {
 
 #[test]
 fn compresses_complete_responses_and_weakens_etags() {
+    let page = Router::new()
+        .page(PageRoute::new("/", home))
+        .handle(
+            Request::new(Method::Get, "/")
+                .with_header("accept-encoding", "gzip")
+                .expect("header"),
+        )
+        .expect("compressed page");
+    assert!(page.is_streaming());
+    assert_eq!(page.headers().get("content-encoding"), Some("gzip"));
+    assert!(page.body().starts_with(&[0x1f, 0x8b]));
+
     let public = TempDir::new("compression");
     let body = "compressible static content\n".repeat(128);
     fs::write(public.path.join("large.txt"), &body).expect("large asset");

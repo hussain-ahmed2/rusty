@@ -1,6 +1,7 @@
 //! Automatic gzip compression for complete responses.
 
-use std::io::Write;
+use std::collections::VecDeque;
+use std::io::{self, Write};
 
 use flate2::write::GzEncoder;
 use flate2::Compression as GzipLevel;
@@ -12,10 +13,11 @@ pub const MIN_COMPRESSED_SIZE: usize = 1024;
 
 /// Returns middleware that gzip-compresses eligible complete responses.
 ///
-/// Compression is negotiated with `Accept-Encoding`, skipped for streaming,
-/// already encoded, too small, or non-compressible responses, and adds
-/// `Vary: Accept-Encoding`. Strong ETags become weak because the encoded
-/// representation differs.
+/// Compression is negotiated with `Accept-Encoding`, skipped for already
+/// encoded, too small, or non-compressible responses, and adds
+/// `Vary: Accept-Encoding`. Streaming responses are compressed as chunks are
+/// produced. Strong ETags become weak because the encoded representation
+/// differs.
 #[must_use]
 pub fn compression() -> Middleware {
     std::sync::Arc::new(|context, next| {
@@ -42,7 +44,17 @@ fn compress(response: &mut Response) {
         weaken_etag(response.headers_mut());
         return;
     }
-    if !response.is_streaming() && is_compressible(response.headers().get("content-type")) {
+    if response.is_streaming() {
+        if response.status().as_u16() >= 200
+            && response.status() != StatusCode::NO_CONTENT
+            && is_compressible(response.headers().get("content-type"))
+        {
+            add_vary(response.headers_mut());
+            compress_stream(response);
+        }
+        return;
+    }
+    if is_compressible(response.headers().get("content-type")) {
         add_vary(response.headers_mut());
     }
     if !eligible(response) {
@@ -63,6 +75,95 @@ fn compress(response: &mut Response) {
     let _ = headers.insert("content-encoding", "gzip");
     *response = Response::new(status).with_body(compressed);
     *response.headers_mut() = headers;
+}
+
+fn compress_stream(response: &mut Response) {
+    let mapped = response.map_stream(|chunks| Box::new(GzipChunks::new(chunks)));
+    if !mapped {
+        return;
+    }
+    let headers = response.headers_mut();
+    let _ = headers.remove("content-length");
+    weaken_etag(headers);
+    let _ = headers.insert("content-encoding", "gzip");
+}
+
+struct GzipChunks {
+    encoder: Option<GzEncoder<ChunkSink>>,
+    chunks: Box<dyn Iterator<Item = Vec<u8>> + Send>,
+    pending: VecDeque<Vec<u8>>,
+    finished: bool,
+}
+
+impl GzipChunks {
+    fn new(chunks: Box<dyn Iterator<Item = Vec<u8>> + Send>) -> Self {
+        Self {
+            encoder: Some(GzEncoder::new(ChunkSink::default(), GzipLevel::default())),
+            chunks,
+            pending: VecDeque::new(),
+            finished: false,
+        }
+    }
+}
+
+impl Iterator for GzipChunks {
+    type Item = Vec<u8>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(chunk) = self.pending.pop_front() {
+                return Some(chunk);
+            }
+            if self.finished {
+                return None;
+            }
+            if let Some(chunk) = self.chunks.next() {
+                let Some(encoder) = self.encoder.as_mut() else {
+                    self.finished = true;
+                    continue;
+                };
+                if encoder.write_all(&chunk).is_err() {
+                    self.finished = true;
+                    continue;
+                }
+                encoder.get_mut().drain_into(&mut self.pending);
+                continue;
+            }
+            let Some(encoder) = self.encoder.take() else {
+                self.finished = true;
+                continue;
+            };
+            match encoder.finish() {
+                Ok(mut sink) => sink.drain_into(&mut self.pending),
+                Err(_) => self.finished = true,
+            }
+            self.finished = true;
+        }
+    }
+}
+
+#[derive(Default)]
+struct ChunkSink {
+    chunks: VecDeque<Vec<u8>>,
+}
+
+impl ChunkSink {
+    fn drain_into(&mut self, destination: &mut VecDeque<Vec<u8>>) {
+        destination.append(&mut self.chunks);
+    }
+}
+
+impl Write for ChunkSink {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if !buffer.is_empty() {
+            self.chunks.push_back(buffer.to_vec());
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn eligible(response: &Response) -> bool {
@@ -223,13 +324,31 @@ mod tests {
         assert_eq!(rejected.headers().get("content-encoding"), None);
 
         let stream = app()
+            .handle(Request::new(Method::Get, "/stream"))
+            .expect("stream");
+        assert_eq!(stream.headers().get("content-encoding"), None);
+        assert_eq!(stream.body(), b"<p>stream</p>");
+    }
+
+    #[test]
+    fn compresses_streaming_responses() {
+        let stream = app()
             .handle(
                 Request::new(Method::Get, "/stream")
                     .with_header("accept-encoding", "gzip")
                     .expect("header"),
             )
             .expect("stream");
-        assert_eq!(stream.headers().get("content-encoding"), None);
+
+        assert_eq!(stream.status(), StatusCode::OK);
+        assert!(stream.is_streaming());
+        assert_eq!(stream.headers().get("content-encoding"), Some("gzip"));
+        assert_eq!(gunzip(stream.body()), "<p>stream</p>");
+        assert!(stream
+            .headers()
+            .get_all("vary")
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case("Accept-Encoding")));
     }
 
     #[test]
