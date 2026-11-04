@@ -62,8 +62,16 @@ jobs:
             url="$base$path"
             status=000
             redirect=""
-            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-              read -r status redirect < <(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "$url")
+            for attempt in $(seq 1 24); do
+              response=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "$url" || true)
+              status=${response%% *}
+              redirect=${response#* }
+              if [ -z "$response" ]; then
+                status=000
+                redirect=""
+              elif [ "$redirect" = "$response" ]; then
+                redirect=""
+              fi
               if [ "$status" = 200 ] && [ -z "$redirect" ]; then
                 break
               fi
