@@ -379,21 +379,99 @@ hr {
   animation: shimmer 1.2s linear infinite;
 }
 
-.skeleton-title {
-  width: min(80%, 34rem);
-  height: 3.5rem;
-  margin-bottom: 2rem;
+.skeleton-eyebrow {
+  width: 9rem;
+  height: 1.25rem;
+  margin: 0 0 0.8rem;
+  border-radius: 0.4rem;
+}
+
+.skeleton-h1 {
+  width: min(92%, 50rem);
+  height: clamp(2.8rem, 8vw, 5.8rem);
+  margin: 0 0 0.55rem;
   border-radius: 0.8rem;
 }
 
-.skeleton.short {
-  width: min(60%, 28rem);
+.page .skeleton-h1 {
+  height: clamp(2.3rem, 5.5vw, 4.2rem);
+}
+
+.skeleton-h1.short {
+  width: min(62%, 34rem);
+}
+
+.skeleton-h3 {
+  width: min(55%, 20rem);
+  height: 2.15rem;
+  margin: 2.2rem 0 0.55rem;
+  border-radius: 0.5rem;
+}
+
+.skeleton-lead {
+  width: min(100%, 44rem);
+  height: 1.5rem;
+  margin: 0.85rem 0;
+}
+
+.skeleton-lead.short {
+  width: min(72%, 32rem);
+}
+
+.skeleton-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.8rem;
+}
+
+.skeleton-button {
+  width: 9.5rem;
+  height: 3.175rem;
+  margin: 0;
+  border-radius: 999px;
+}
+
+.skeleton-stack {
+  width: min(100%, 42rem);
+}
+
+.skeleton-stack .skeleton-eyebrow {
+  margin-bottom: 0.5rem;
+}
+
+.skeleton-stack .skeleton-h3 {
+  margin-top: 1rem;
+}
+
+.skeleton-list {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.85rem;
+}
+
+.skeleton-nav {
+  width: 85%;
+  height: 1.95rem;
+  margin: 0;
+  border-radius: 0.55rem;
 }
 
 .card-skeleton {
-  height: 9rem;
+  height: 11.2rem;
   margin: 0;
   border-radius: var(--radius);
+}
+
+.docs-page .card-skeleton {
+  height: 11.75rem;
+}
+
+#__rusty_navigation_loading {
+  background:
+    radial-gradient(circle at 15% -10%, var(--accent-soft), transparent 32rem),
+    var(--bg) !important;
+  color: var(--text) !important;
 }
 
 @keyframes shimmer {

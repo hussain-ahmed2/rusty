@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod chrome;
 mod content;
 
 #[rusty::app]
