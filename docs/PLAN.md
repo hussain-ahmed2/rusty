@@ -291,8 +291,11 @@ adapters.
 
 Static generation, metadata, caching, image handling, and deployment support.
 Static assets now emit content-based `ETag` and `Last-Modified` headers and
-support `If-None-Match` and `If-Modified-Since` conditional requests. Static
-generation, metadata, image handling, and broader deployment support remain.
+support `If-None-Match` and `If-Modified-Since` conditional requests. Complete
+text, JSON, JavaScript, SVG, XML, and WebAssembly responses larger than 1 KiB are
+gzip-compressed when negotiated, with `Vary: Accept-Encoding` and weak ETags.
+Streaming responses remain uncompressed. Static generation, metadata, image
+handling, and broader deployment support remain.
 A documentation website deployed through GitHub Pages will be added once static
 generation can produce the site.
 

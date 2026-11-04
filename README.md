@@ -28,6 +28,7 @@ bundles.
 - [x] Development rebuild-and-restart loop with file watching
 - [x] Blocking HTTP/1.1 transport with bounded headers and bodies
 - [x] Public static asset serving, validated build-time manifests, and conditional caching
+- [x] Gzip compression for complete dynamic and static responses
 - [x] File-based application middleware in `src/middleware.rs`
 - [x] External CSS preprocessing for PostCSS, Tailwind CSS, Sass, and similar tools
 - [x] WebAssembly client builds and automatic client asset serving
@@ -258,6 +259,11 @@ derived from file extensions, `Cache-Control: public, max-age=3600` in productio
 and `no-cache` in development. Static and generated client assets also receive
 content-based `ETag` and `Last-Modified` headers, and requests with matching
 `If-None-Match` or `If-Modified-Since` receive `304 Not Modified` without a body.
+Complete text, JSON, JavaScript, SVG, XML, and WebAssembly responses larger than
+1 KiB are gzip-compressed when the client accepts gzip. Compressed responses add
+`Vary: Accept-Encoding` and use weak ETags. Streaming SSR responses pass through
+uncompressed. Application routers enable compression by default; disable it with
+`Router::compression(false)` or compose `compression()` into a custom `HttpRouter`.
 Async handlers, chunked SSR, loading boundaries, and same-origin client
 navigation are supported; platform-specific deployment adapters remain a future
 milestone.

@@ -200,6 +200,7 @@ pub struct Router {
     rpcs: Vec<RpcRegistration>,
     not_found: Option<NotFoundRoute>,
     middleware: Option<MiddlewareHandler>,
+    compression: Option<bool>,
     public_dir: Option<PathBuf>,
     client_dir: Option<PathBuf>,
     diagnostics: bool,
@@ -254,6 +255,16 @@ impl Router {
         F: Fn(&mut RequestContext) -> Result<Option<Response>, ServerError> + Send + Sync + 'static,
     {
         self.middleware = Some(Arc::new(middleware));
+        self
+    }
+
+    /// Enables or disables gzip compression for complete responses.
+    ///
+    /// Compression is enabled by default. Responses created with
+    /// [`Response::stream`] are not compressed.
+    #[must_use]
+    pub fn compression(mut self, enabled: bool) -> Self {
+        self.compression = Some(enabled);
         self
     }
 
@@ -330,6 +341,9 @@ impl Router {
             Arc::new(String::new())
         };
 
+        if self.compression.unwrap_or(true) {
+            router = router.middleware(rusty_server::compression());
+        }
         if let Some(middleware) = &self.middleware {
             let middleware = Arc::clone(middleware);
             router = router.middleware(Arc::new(move |context, next| match middleware(context)? {

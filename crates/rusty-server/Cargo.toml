@@ -12,4 +12,5 @@ workspace = true
 
 [dependencies]
 rusty-router.workspace = true
+flate2.workspace = true
 getrandom.workspace = true

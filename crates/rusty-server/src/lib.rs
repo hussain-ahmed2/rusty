@@ -1,8 +1,8 @@
 //! Transport-neutral HTTP runtime for Rusty.
 //!
 //! `rusty-server` provides typed HTTP methods, status codes, headers, requests,
-//! and responses, plus method-aware routing, middleware, bearer
-//! authentication, and double-submit-cookie CSRF protection. The optional
+//! and responses, plus method-aware routing, middleware, gzip compression,
+//! bearer authentication, and double-submit-cookie CSRF protection. The optional
 //! [`HttpServer`] transport adapter parses HTTP/1.0 and HTTP/1.1 requests over
 //! TCP and writes [`Response`] values back to the socket. Responses created with
 //! [`Response::stream`] use chunked transfer encoding. [`block_on`] runs
@@ -27,6 +27,7 @@
 #![deny(missing_docs)]
 
 mod auth;
+mod compression;
 mod context;
 mod csrf;
 mod error;
@@ -37,6 +38,7 @@ mod router;
 mod transport;
 
 pub use auth::{authenticate, require_auth, AuthIdentity, Authenticator, BearerAuthenticator};
+pub use compression::{compression, MIN_COMPRESSED_SIZE};
 pub use context::{Extensions, RequestContext};
 pub use csrf::{csrf, CsrfMiddleware, CsrfToken, CSRF_COOKIE, CSRF_HEADER};
 pub use error::ServerError;

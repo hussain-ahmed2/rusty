@@ -150,9 +150,10 @@ pub use rusty_rpc::{
 pub use rusty_rpc::{RpcRegistry, ServerInvoker};
 #[cfg(not(target_arch = "wasm32"))]
 pub use rusty_server::{
-    authenticate, csrf, require_auth, AuthIdentity, Authenticator, BearerAuthenticator,
-    CsrfMiddleware, CsrfToken, Extensions, Handler, Headers, HttpRouter, Method, Middleware, Next,
-    Request, RequestContext, Response, ServerError, StatusCode, CSRF_COOKIE, CSRF_HEADER,
+    authenticate, compression, csrf, require_auth, AuthIdentity, Authenticator,
+    BearerAuthenticator, CsrfMiddleware, CsrfToken, Extensions, Handler, Headers, HttpRouter,
+    Method, Middleware, Next, Request, RequestContext, Response, ServerError, StatusCode,
+    CSRF_COOKIE, CSRF_HEADER,
 };
 pub use rusty_ssr::{
     render_hydrated, render_to_chunks, render_to_string, HydrationRenderError, RenderError,

@@ -417,6 +417,65 @@ fn serves_conditional_asset_requests() {
 }
 
 #[test]
+fn compresses_complete_responses_and_weakens_etags() {
+    let public = TempDir::new("compression");
+    let body = "compressible static content\n".repeat(128);
+    fs::write(public.path.join("large.txt"), &body).expect("large asset");
+
+    let router = Router::new().public_dir(&public.path);
+    let full = router
+        .handle(
+            Request::new(Method::Get, "/large.txt")
+                .with_header("accept-encoding", "gzip")
+                .expect("header"),
+        )
+        .expect("compressed asset");
+    assert_eq!(full.status(), StatusCode::OK);
+    assert_eq!(full.headers().get("content-encoding"), Some("gzip"));
+    assert!(full.body().len() < body.len());
+    let etag = full.headers().get("etag").expect("etag").to_owned();
+    assert!(etag.starts_with("W/\""));
+    assert!(full
+        .headers()
+        .get_all("vary")
+        .iter()
+        .any(|value| value.eq_ignore_ascii_case("Accept-Encoding")));
+
+    let not_modified = router
+        .handle(
+            Request::new(Method::Get, "/large.txt")
+                .with_header("accept-encoding", "gzip")
+                .expect("header")
+                .with_header("if-none-match", etag)
+                .expect("header"),
+        )
+        .expect("conditional compressed asset");
+    assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+    assert!(not_modified.body().is_empty());
+    assert!(not_modified
+        .headers()
+        .get("etag")
+        .is_some_and(|value| value.starts_with("W/\"")));
+    assert!(not_modified
+        .headers()
+        .get_all("vary")
+        .iter()
+        .any(|value| value.eq_ignore_ascii_case("Accept-Encoding")));
+
+    let disabled = Router::new()
+        .public_dir(&public.path)
+        .compression(false)
+        .handle(
+            Request::new(Method::Get, "/large.txt")
+                .with_header("accept-encoding", "gzip")
+                .expect("header"),
+        )
+        .expect("uncompressed asset");
+    assert_eq!(disabled.headers().get("content-encoding"), None);
+    assert_eq!(disabled.body(), body.as_bytes());
+}
+
+#[test]
 fn serves_generated_client_artifacts_under_the_reserved_prefix() {
     let client = TempDir::new("client");
     fs::write(client.path.join("demo_client.js"), "export default {};").expect("script");

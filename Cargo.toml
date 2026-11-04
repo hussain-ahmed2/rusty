@@ -47,6 +47,7 @@ rusty-reactivity = { path = "crates/rusty-reactivity", version = "0.1.0" }
 rusty-router = { path = "crates/rusty-router", version = "0.1.0" }
 rusty-rpc = { path = "crates/rusty-rpc", version = "0.1.0" }
 rusty-server = { path = "crates/rusty-server", version = "0.1.0" }
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 getrandom = { version = "0.2", features = ["js"] }
 rusty-renderer = { path = "crates/rusty-renderer", version = "0.1.0" }
 rusty-vdom = { path = "crates/rusty-vdom", version = "0.1.0" }
