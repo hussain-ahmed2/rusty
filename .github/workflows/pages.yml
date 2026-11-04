@@ -1,0 +1,50 @@
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: Export static site
+        run: cargo run --release -p site
+        env:
+          RUSTY_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          SITE_OUT_DIR: .pages
+      - name: Check export
+        run: |
+          test -f .pages/index.html
+          test -f .pages/404.html
+          test -f .pages/docs/index.html
+          test -f .pages/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .pages
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -23,6 +23,7 @@ members = [
     "examples/hydration",
     "examples/reactivity",
     "examples/routing",
+    "examples/site",
     "examples/tooling",
 ]
 

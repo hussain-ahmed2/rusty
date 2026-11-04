@@ -1073,3 +1073,13 @@ explicit and return a typed report for printing by the binary:
   and rebuilds the configured WebAssembly client when its inputs change.
 
 Usage errors exit with status 2; execution failures exit with status 1.
+
+### Static export example
+
+`examples/site` exports a complete documentation site with `cargo run -p site`.
+The generator asks the application router for each known path, writes the
+streamed response into an `index.html` tree, copies public assets, emits
+`404.html`, and adds `.nojekyll`. It supports project-page base paths through
+`RUSTY_BASE_PATH`; the generated navigation runtime strips the same prefix before
+matching loading boundaries. A dedicated `Deploy site` workflow publishes the
+artifact through GitHub Pages.

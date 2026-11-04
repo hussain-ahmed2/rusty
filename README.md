@@ -247,10 +247,27 @@ and `no-cache` in development. Async handlers, chunked SSR, loading boundaries,
 and same-origin client navigation are supported; platform-specific deployment
 adapters remain a future milestone.
 
+## Documentation site
+
+[`examples/site`](examples/site) is a static Rusty site with file-based pages,
+a nested docs layout, a dynamic `[slug]` route, a loading boundary, client
+navigation, and a generated 404 page. Build it locally with:
+
+```bash
+RUSTY_BASE_PATH=/rusty SITE_OUT_DIR=.pages cargo run --release -p site
+```
+
+The exported directory is self-contained: HTML pages are written as
+`index.html` files, public assets are copied, and `.nojekyll` is added. The
+`Deploy site` workflow runs the same command with the base path reported by
+`actions/configure-pages`, uploads `.pages`, and deploys it to GitHub Pages.
+
 ## Continuous integration
 
 GitHub Actions runs formatting, Clippy, the workspace tests, rustdoc with
-warnings denied, and a WASM check for the `rusty` crate test suite.
+warnings denied, and a WASM check for the `rusty` crate test suite. A separate
+`Deploy site` workflow exports `examples/site` and publishes it to GitHub Pages
+on every push to `main`.
 
 ## Configuration
 

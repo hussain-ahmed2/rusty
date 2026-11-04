@@ -129,9 +129,11 @@ const SCRIPT: &str = r#"<script>
   } catch (_) {}
 
   function routePath(pathname) {
+    var meta = document.querySelector('meta[name="rusty-base"]');
     var base = document.querySelector("base[href]");
-    if (base) {
-      var basePath = new URL(base.href, location.href).pathname;
+    var baseHref = meta ? meta.getAttribute("content") : base ? base.href : null;
+    if (baseHref) {
+      var basePath = new URL(baseHref, location.href).pathname;
       if (basePath.length > 1) {
         if (basePath.charAt(basePath.length - 1) !== "/") basePath += "/";
         if (pathname + "/" === basePath) {
