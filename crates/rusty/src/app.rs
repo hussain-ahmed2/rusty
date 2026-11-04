@@ -1,9 +1,11 @@
 //! File-based application runtime.
 //!
 //! The `#[rusty::app]` macro generates a module tree and calls these types to
-//! register page modules, API route modules, layouts, and error boundaries.
-//! Static files from the configured public directory and generated WebAssembly
-//! client artifacts are served as a fallback after application routes.
+//! register page modules, API route modules, layouts, loading boundaries, and
+//! error boundaries. Pages with loading boundaries enable same-origin client
+//! navigation by default. Static files from the configured public directory and
+//! generated WebAssembly client artifacts are served as a fallback after
+//! application routes.
 
 use std::env;
 use std::error::Error;
@@ -24,6 +26,7 @@ use rusty_server::{
 use rusty_ssr::render_to_chunks;
 
 mod assets;
+mod navigation;
 
 /// Renders a page for a matched route.
 pub type PageHandler = fn(&mut RequestContext) -> Result<Element, ServerError>;
@@ -68,6 +71,9 @@ pub type ErrorHandler = fn(&ServerError) -> Element;
 
 /// Renders the application not-found page.
 pub type NotFoundHandler = fn() -> Element;
+
+/// Renders a route's loading boundary.
+pub type LoadingHandler = fn() -> Element;
 
 #[derive(Clone)]
 struct NotFoundRoute {
@@ -126,6 +132,7 @@ pub struct PageRoute {
     pattern: String,
     page: PageEndpoint,
     layouts: Vec<Layout>,
+    loading: Option<LoadingHandler>,
     error: Option<ErrorHandler>,
 }
 
@@ -137,6 +144,7 @@ impl PageRoute {
             pattern: pattern.into(),
             page: PageEndpoint::Sync(page),
             layouts: Vec::new(),
+            loading: None,
             error: None,
         }
     }
@@ -148,6 +156,7 @@ impl PageRoute {
             pattern: pattern.into(),
             page: PageEndpoint::Async(page),
             layouts: Vec::new(),
+            loading: None,
             error: None,
         }
     }
@@ -156,6 +165,13 @@ impl PageRoute {
     #[must_use]
     pub fn layouts(mut self, layouts: &[Layout]) -> Self {
         self.layouts = layouts.to_vec();
+        self
+    }
+
+    /// Sets the nearest loading boundary shown during client navigation.
+    #[must_use]
+    pub fn loading(mut self, handler: LoadingHandler) -> Self {
+        self.loading = Some(handler);
         self
     }
 
@@ -179,6 +195,7 @@ pub struct Router {
     public_dir: Option<PathBuf>,
     client_dir: Option<PathBuf>,
     diagnostics: bool,
+    navigation: Option<bool>,
 }
 
 impl Router {
@@ -262,6 +279,18 @@ impl Router {
         self
     }
 
+    /// Enables or disables same-origin client navigation.
+    ///
+    /// Navigation is enabled automatically when any page has a loading boundary.
+    /// Enabling it without boundaries still installs the runtime with a generic
+    /// loading indicator. Disabling it makes every link use the browser's normal
+    /// document request.
+    #[must_use]
+    pub fn navigation(mut self, enabled: bool) -> Self {
+        self.navigation = Some(enabled);
+        self
+    }
+
     /// Builds the underlying HTTP router.
     ///
     /// # Errors
@@ -270,15 +299,25 @@ impl Router {
     /// overlap, or an API route has no method handlers.
     pub fn build(&self) -> Result<HttpRouter, ServerError> {
         let mut router = HttpRouter::new();
+        let navigation_enabled = self
+            .navigation
+            .unwrap_or_else(|| self.pages.iter().any(|page| page.loading.is_some()));
+        let navigation = if navigation_enabled {
+            Arc::new(navigation::build(&self.pages)?)
+        } else {
+            Arc::new(String::new())
+        };
 
         for page in &self.pages {
             let route = page.clone();
+            let nav_get = Arc::clone(&navigation);
             router = router.get(&page.pattern, move |context| {
-                Ok(render_page(&route, context))
+                Ok(render_page(&route, context, &nav_get))
             })?;
             let route = page.clone();
+            let nav_head = Arc::clone(&navigation);
             router = router.method(Method::Head, &page.pattern, move |context| {
-                Ok(render_page(&route, context))
+                Ok(render_page(&route, context, &nav_head))
             })?;
         }
 
@@ -343,6 +382,7 @@ impl Router {
         });
         if self.not_found.is_some() || static_files.is_some() || client_files.is_some() {
             let not_found = self.not_found.clone();
+            let navigation = Arc::clone(&navigation);
             router = router.fallback(move |context| {
                 if let Some(response) = client_files
                     .as_ref()
@@ -358,7 +398,7 @@ impl Router {
                 }
                 Ok(not_found.as_ref().map_or_else(
                     || Response::text(StatusCode::NOT_FOUND, "not found"),
-                    render_not_found,
+                    |route| render_not_found(route, &navigation),
                 ))
             });
         }
@@ -392,41 +432,71 @@ fn add_method(
     }
 }
 
-fn render_page(route: &PageRoute, context: &mut RequestContext) -> Response {
+fn render_page(route: &PageRoute, context: &mut RequestContext, navigation: &str) -> Response {
     match route.page.render(context) {
-        Ok(page) => render_success(page, &route.layouts),
+        Ok(page) => render_success(page, &route.layouts, navigation),
         Err(error) => {
             let page = route
                 .error
                 .map_or_else(|| default_error(&error), |handler| handler(&error));
-            render_failure(page, &route.layouts)
+            render_failure(page, &route.layouts, navigation)
         }
     }
 }
 
-fn render_success(page: Element, layouts: &[Layout]) -> Response {
-    render_document(page, layouts, StatusCode::OK, "Rusty")
+fn render_success(page: Element, layouts: &[Layout], navigation: &str) -> Response {
+    render_document(page, layouts, StatusCode::OK, "Rusty", navigation)
 }
 
-fn render_failure(page: Element, layouts: &[Layout]) -> Response {
-    render_document(page, layouts, StatusCode::INTERNAL_SERVER_ERROR, "Rusty")
+fn render_failure(page: Element, layouts: &[Layout], navigation: &str) -> Response {
+    render_document(
+        page,
+        layouts,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Rusty",
+        navigation,
+    )
 }
 
-fn render_document(page: Element, layouts: &[Layout], status: StatusCode, title: &str) -> Response {
+fn render_document(
+    page: Element,
+    layouts: &[Layout],
+    status: StatusCode,
+    title: &str,
+    navigation: &str,
+) -> Response {
     let page = apply_layouts(page, layouts);
+    let navigation = navigation::markup(navigation);
     match render_to_chunks(&page) {
         Ok(chunks) if layouts.is_empty() => {
-            let mut stream = Vec::with_capacity(chunks.len() + 2);
+            let mut stream = Vec::with_capacity(chunks.len() + 3);
             stream.push(format!(
                 "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title></head><body>"
             ));
             stream.extend(chunks);
+            stream.push(navigation);
             stream.push("</body></html>".to_owned());
             Response::stream_html(status, stream)
         }
-        Ok(chunks) => Response::stream_html(status, chunks),
+        Ok(mut chunks) => {
+            insert_navigation(&mut chunks, navigation);
+            Response::stream_html(status, chunks)
+        }
         Err(error) => render_error_response(&error.to_string()),
     }
+}
+
+fn insert_navigation(chunks: &mut Vec<String>, navigation: String) {
+    if navigation.is_empty() {
+        return;
+    }
+    for chunk in chunks.iter_mut().rev() {
+        if let Some(index) = chunk.rfind("</body>") {
+            chunk.insert_str(index, &navigation);
+            return;
+        }
+    }
+    chunks.push(navigation);
 }
 
 fn apply_layouts(mut page: Element, layouts: &[Layout]) -> Element {
@@ -436,12 +506,13 @@ fn apply_layouts(mut page: Element, layouts: &[Layout]) -> Element {
     page
 }
 
-fn render_not_found(route: &NotFoundRoute) -> Response {
+fn render_not_found(route: &NotFoundRoute, navigation: &str) -> Response {
     render_document(
         (route.handler)(),
         &route.layouts,
         StatusCode::NOT_FOUND,
         "Not Found",
+        navigation,
     )
 }
 

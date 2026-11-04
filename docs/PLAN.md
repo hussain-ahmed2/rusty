@@ -81,8 +81,9 @@ remain immediately recognizable.
 CLI commands, compiler-generated runtime registration, page/API/RPC dispatch,
 development restart-on-change, native build/start, static public assets,
 build-time asset manifests, WebAssembly client builds, generated client
-serving, async handlers, and chunked streaming SSR are complete. Loading
-boundaries and platform-specific deployment adapters remain.
+serving, async handlers, chunked streaming SSR, loading boundaries, and
+same-origin client navigation are complete. Platform-specific deployment
+adapters remain.
 
 ### Milestone 1 — Foundation (complete)
 
@@ -276,9 +277,9 @@ Deliverables completed:
 
 Remaining for Milestone 8:
 
-- Loading boundaries, dependent server/client analysis, and client navigation.
 - Platform-specific deployment adapters and incremental builds for larger
   applications.
+- Dependent server/client analysis.
 
 Explicit non-goals for the current slice: database integrations and deployment
 adapters.
@@ -965,8 +966,36 @@ the HTTP/1.1 transport emits `transfer-encoding: chunked` instead of
 handlers. `Response::body()` still returns a complete byte slice by collecting a
 stream once; `into_parts()` does the same for transport-neutral callers.
 
-Chunked SSR starts after the page future resolves. Loading boundaries,
-suspending subtrees mid-document, and client navigation remain future work.
+Chunked SSR starts after the page future resolves. Suspending subtrees
+mid-document remains future work.
+
+### Loading boundaries and client navigation
+
+`RouteManifest` already records the nearest `loading.rs` for each page.
+`#[rusty::app]` registers that handler through `PageRoute::loading`, where the
+boundary is a synchronous `fn() -> Element`. During `Router::build`, each
+boundary is rendered once into JSON embedded in every page. Route patterns are
+turned into anchored regular expressions and ordered by specificity so a
+navigated path selects the same boundary a server route would.
+
+Navigation is enabled automatically when at least one page has a boundary.
+`Router::navigation(true)` enables it for an application without boundaries, and
+`Router::navigation(false)` disables it. The browser runtime intercepts plain
+left-click navigation on same-origin links and fetches the destination with an
+`X-Rusty-Navigation: 1` header. The target's boundary is rendered in a fixed
+status overlay while the request is in flight. Once a successful HTML response
+arrives, the runtime calls `history.pushState` and replaces the document with
+`document.open`, `document.write`, and `document.close`. Back and forward use the
+same fetch-and-replace path.
+
+This deliberately replaces the whole document rather than patching a persistent
+application shell. Scripts rerun and client state is recreated, which keeps
+hydration correct without introducing teardown or ownership transfer. Links with
+`target`, `download`, `rel="external"`, or `data-rusty-reload`, cross-origin and
+hash-only links, protected `/_rusty/` paths, forms, and non-HTML responses keep
+native behavior. If the destination has no loading boundary, a generic loading
+indicator is used. Client-side state preservation, scroll restoration, prefetch,
+and form interception remain future work.
 
 ### Deployment bundle
 

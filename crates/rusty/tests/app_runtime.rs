@@ -58,6 +58,10 @@ fn not_found() -> Element {
     view! { <p>"missing"</p> }
 }
 
+fn loading() -> Element {
+    view! { <p>"Loading & more"</p> }
+}
+
 fn invalid(_context: &mut RequestContext) -> Result<Element, ServerError> {
     let tag: TagName = TagName::new("br").expect("valid tag");
     Ok(Element::html(tag, Vec::new(), vec![Element::text("x")]))
@@ -221,6 +225,46 @@ fn not_found_uses_layouts_when_provided() {
         .expect("not found");
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(response.body(), b"<main><p>missing</p></main>");
+}
+
+#[test]
+fn builds_client_navigation_data_with_specific_patterns() {
+    let router = Router::new()
+        .page(PageRoute::new("/blog/[slug]", slug).loading(loading))
+        .page(PageRoute::new("/blog/featured", home).loading(loading))
+        .page(PageRoute::new("/docs/[...path]", home).loading(loading));
+
+    let response = router
+        .handle(Request::new(Method::Get, "/blog/featured"))
+        .expect("featured");
+    let body = String::from_utf8_lossy(response.body());
+
+    assert!(body.contains("id=\"__rusty_navigation_data\""));
+    assert!(body.contains("window.__rustyNavigation"));
+    assert!(body.contains("\\u003cp\\u003eLoading \\u0026amp; more\\u003c/p\\u003e"));
+
+    let static_index = body
+        .find("\"source\":\"^/blog/featured$\"")
+        .expect("static route");
+    let dynamic_index = body
+        .find("\"source\":\"^/blog/[^/]+$\"")
+        .expect("dynamic route");
+    assert!(static_index < dynamic_index);
+
+    let catch_all_index = body
+        .find("\"source\":\"^/docs/.+$\"")
+        .expect("catch-all route");
+    assert!(dynamic_index < catch_all_index);
+}
+
+#[test]
+fn navigation_can_be_disabled_explicitly() {
+    let router = Router::new()
+        .page(PageRoute::new("/", home).loading(loading))
+        .navigation(false);
+
+    let response = router.handle(Request::new(Method::Get, "/")).expect("home");
+    assert!(!String::from_utf8_lossy(response.body()).contains("__rusty_navigation_data"));
 }
 
 #[test]

@@ -31,7 +31,7 @@ bundles.
 - [x] WebAssembly client builds and automatic client asset serving
 - [x] Standalone deployment bundles with app, public, and client artifacts
 - [x] Async page/API handlers and chunked streaming SSR
-- [ ] Loading boundaries
+- [x] Loading boundaries and same-origin client navigation
 - [ ] Platform-specific deployment adapters
 
 Milestones 1–7 provide the `view!` macro, typed components, safe escaping,
@@ -243,9 +243,9 @@ The development supervisor runs the application with `cargo run`, sets
 change. `rusty build` writes the application manifest and delegates native
 compilation to Cargo; `rusty start` runs it. Static responses use MIME types
 derived from file extensions, `Cache-Control: public, max-age=3600` in production,
-and `no-cache` in development. Async handlers and chunked SSR are supported;
-loading boundaries, client navigation, and platform-specific deployment
-adapters remain future milestones.
+and `no-cache` in development. Async handlers, chunked SSR, loading boundaries,
+and same-origin client navigation are supported; platform-specific deployment
+adapters remain a future milestone.
 
 ## Continuous integration
 
@@ -327,6 +327,28 @@ Pages are serialized into ordered eight-kilobyte chunks and sent with
 streaming body when a transport-neutral caller or test needs the full bytes.
 Chunked SSR currently starts after the page future completes; it does not yet
 insert loading boundaries or await suspended subtrees.
+
+### Loading boundaries and client navigation
+
+A `loading.rs` module exports `pub fn loading() -> Element`. The nearest loading
+boundary is attached to each page during routing. When any page has a loading
+boundary, the generated runtime enables same-origin client navigation
+automatically; `Router::navigation(true)` opts in without boundaries and
+`Router::navigation(false)` restores normal browser navigation.
+
+Clicking an eligible same-origin link shows the target route's loading boundary
+in a fixed overlay, fetches the destination, and replaces the document with the
+response instead of waiting for a blank browser transition. The URL is updated
+with `history.pushState`; back and forward use the same path. The loading
+boundary is rendered at router-build time, so it is synchronous and does not
+receive a `RequestContext`.
+
+This is whole-document navigation, not a persistent single-page shell:
+scripts in the fetched document run again, and client state is recreated. Links
+with `target`, `download`, `rel="external"`, or `data-rusty-reload` keep native
+behavior, as do cross-origin links, hash-only links, and non-HTML responses.
+Forms and links to reserved `/_rusty/` paths are not intercepted. If a target
+route has no loading boundary, a generic status overlay is shown.
 
 ### Deployment bundle
 

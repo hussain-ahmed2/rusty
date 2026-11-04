@@ -46,11 +46,15 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
             .iter()
             .map(|path| modules.register(&app_root, path))
             .collect::<syn::Result<Vec<_>>>()?;
+        let loading = route
+            .loading()
+            .map(|path| modules.register(&app_root, path))
+            .transpose()?;
         let error = route
             .error()
             .map(|path| modules.register(&app_root, path))
             .transpose()?;
-        routes.push((route, page, layouts, error));
+        routes.push((route, page, layouts, loading, error));
     }
 
     let mut apis = Vec::new();
@@ -90,7 +94,7 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
     }
 
     let mut registrations = Vec::new();
-    for (route, page, layouts, error) in routes {
+    for (route, page, layouts, loading, error) in routes {
         let pattern = route.pattern().to_string();
         let page_async = modules.is_async(&page, "page");
         let page = modules.ident(&page);
@@ -98,6 +102,13 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
             .iter()
             .map(|module| modules.ident(module))
             .collect::<Vec<_>>();
+        let loading = match loading {
+            Some(loading) => {
+                let loading = modules.ident(&loading);
+                quote! { .loading(#loading::loading) }
+            }
+            None => TokenStream::new(),
+        };
         let error = match error {
             Some(error) => {
                 let error = modules.ident(&error);
@@ -121,6 +132,7 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
             router = router.page(
                 #page_route
                     .layouts(&[#(#layouts::layout),*])
+                    #loading
                     #error
             );
         });

@@ -40,7 +40,7 @@ use syn::parse_macro_input;
 /// Layouts export `pub fn layout(children: Children) -> Element`. API routes
 /// export lower-case HTTP method handlers such as `pub fn get(context: &mut
 /// RequestContext) -> Result<Response, ServerError>`; those handlers may also be
-/// declared `async`.
+/// declared `async`. Loading boundaries export `pub fn loading() -> Element`.
 #[proc_macro_attribute]
 pub fn app(attributes: TokenStream, item: TokenStream) -> TokenStream {
     if !attributes.is_empty() {

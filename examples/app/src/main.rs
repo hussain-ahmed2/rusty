@@ -23,7 +23,10 @@ mod tests {
             .handle(Request::new(Method::Get, "/async"))
             .expect("async page");
         assert_eq!(page.status(), StatusCode::OK);
-        assert!(String::from_utf8_lossy(page.body()).contains("Async page"));
+        let body = String::from_utf8_lossy(page.body());
+        assert!(body.contains("Async page"));
+        assert!(body.contains("id=\"__rusty_navigation_data\""));
+        assert!(body.contains("Loading\u{2026}"));
 
         let api = router
             .handle(Request::new(Method::Get, "/api/async"))
