@@ -33,5 +33,15 @@ mod tests {
             .expect("async api");
         assert_eq!(api.status(), StatusCode::OK);
         assert_eq!(api.body(), br#"{"status":"ok"}"#);
+
+        let blocked = router
+            .handle(
+                Request::new(Method::Get, "/")
+                    .with_header("x-rusty-block", "1")
+                    .expect("header"),
+            )
+            .expect("blocked request");
+        assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
+        assert_eq!(blocked.body(), b"blocked by middleware");
     }
 }

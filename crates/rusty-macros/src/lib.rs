@@ -41,6 +41,12 @@ use syn::parse_macro_input;
 /// export lower-case HTTP method handlers such as `pub fn get(context: &mut
 /// RequestContext) -> Result<Response, ServerError>`; those handlers may also be
 /// declared `async`. Loading boundaries export `pub fn loading() -> Element`.
+///
+/// If the configured source root contains `middleware.rs`, it must export
+/// `pub fn middleware(context: &mut RequestContext) ->
+/// Result<Option<Response>, ServerError>`. The generated router runs it before
+/// pages, API routes, and static files; returning `Some(response)` short-circuits
+/// the request and returning `None` continues.
 #[proc_macro_attribute]
 pub fn app(attributes: TokenStream, item: TokenStream) -> TokenStream {
     if !attributes.is_empty() {

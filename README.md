@@ -28,6 +28,7 @@ bundles.
 - [x] Development rebuild-and-restart loop with file watching
 - [x] Blocking HTTP/1.1 transport with bounded headers and bodies
 - [x] Public static asset serving, validated build-time manifests, and conditional caching
+- [x] File-based application middleware in `src/middleware.rs`
 - [x] External CSS preprocessing for PostCSS, Tailwind CSS, Sass, and similar tools
 - [x] WebAssembly client builds and automatic client asset serving
 - [x] Standalone deployment bundles with app, public, and client artifacts
@@ -233,6 +234,16 @@ page exports `pub fn not_found() -> Element`. API route modules export lower-cas
 HTTP methods such as `pub fn get(context: &mut RequestContext) ->
 Result<Response, ServerError>`. `#[server]` markers discovered outside `src/app`
 are registered automatically from their declared module paths.
+
+Application middleware lives in `src/middleware.rs` and exports:
+
+```rust
+pub fn middleware(context: &mut RequestContext) -> Result<Option<Response>, ServerError>
+```
+
+It runs before pages, API routes, and static files. Return `Some(response)` to
+short-circuit the request, or `None` to continue. The generated module enables
+file-based discovery; custom routers can call `Router::middleware(...)` directly.
 
 Every application must include a build script that emits
 `cargo:rerun-if-changed` for `src` so Cargo re-expands the macro when routes

@@ -69,6 +69,27 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
         .map(|path| modules.register(&app_root, path))
         .transpose()?;
 
+    let middleware_path = compiler.source_root().join("middleware.rs");
+    let middleware = if middleware_path.is_file() {
+        let path = modules.register(&app_root, &middleware_path)?;
+        let Some(function) = modules.functions(&path).get("middleware") else {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "`src/middleware.rs` must export `pub fn middleware`",
+            ));
+        };
+        if function.is_async {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "`src/middleware.rs` middleware must be synchronous",
+            ));
+        }
+        let module = modules.ident(&path);
+        quote! { router = router.middleware(#module::middleware); }
+    } else {
+        TokenStream::new()
+    };
+
     let mut rpcs = Vec::new();
     for function in manifest.server_functions() {
         let source = compiler.project_root().join(function.source());
@@ -215,6 +236,7 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
             #[must_use]
             pub fn router() -> ::rusty::app::Router {
                 let mut router = ::rusty::app::Router::new();
+                #middleware
                 #(#registrations)*
                 router
             }

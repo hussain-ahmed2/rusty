@@ -31,6 +31,13 @@ mod navigation;
 /// Renders a page for a matched route.
 pub type PageHandler = fn(&mut RequestContext) -> Result<Element, ServerError>;
 
+/// Runs before application routes and static files.
+///
+/// Returning `Some(response)` short-circuits the request; returning `None`
+/// continues through the route table and static asset fallbacks.
+pub type MiddlewareHandler =
+    Arc<dyn Fn(&mut RequestContext) -> Result<Option<Response>, ServerError> + Send + Sync>;
+
 /// A boxed future returned by an asynchronous page handler.
 pub type AsyncPageFuture<'a> = Pin<Box<dyn Future<Output = Result<Element, ServerError>> + 'a>>;
 
@@ -192,6 +199,7 @@ pub struct Router {
     apis: Vec<(String, ApiMethods)>,
     rpcs: Vec<RpcRegistration>,
     not_found: Option<NotFoundRoute>,
+    middleware: Option<MiddlewareHandler>,
     public_dir: Option<PathBuf>,
     client_dir: Option<PathBuf>,
     diagnostics: bool,
@@ -232,6 +240,20 @@ impl Router {
             registry.register::<F>()
         }
         self.rpcs.push(register::<F>);
+        self
+    }
+
+    /// Adds application middleware that runs before routes and static files.
+    ///
+    /// The middleware may return a response to short-circuit the request, or
+    /// `None` to continue. `#[rusty::app]` registers `src/middleware.rs`
+    /// automatically when that file exports `pub fn middleware`.
+    #[must_use]
+    pub fn middleware<F>(mut self, middleware: F) -> Self
+    where
+        F: Fn(&mut RequestContext) -> Result<Option<Response>, ServerError> + Send + Sync + 'static,
+    {
+        self.middleware = Some(Arc::new(middleware));
         self
     }
 
@@ -307,6 +329,14 @@ impl Router {
         } else {
             Arc::new(String::new())
         };
+
+        if let Some(middleware) = &self.middleware {
+            let middleware = Arc::clone(middleware);
+            router = router.middleware(Arc::new(move |context, next| match middleware(context)? {
+                Some(response) => Ok(response),
+                None => next.run(context),
+            }));
+        }
 
         for page in &self.pages {
             let route = page.clone();

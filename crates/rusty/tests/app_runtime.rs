@@ -154,6 +154,31 @@ fn awaits_async_pages_and_api_handlers() {
 }
 
 #[test]
+fn middleware_can_short_circuit_or_continue() {
+    fn middleware(context: &mut RequestContext) -> Result<Option<Response>, ServerError> {
+        if context.request().path() == "/private" {
+            return Ok(Some(Response::text(StatusCode::FORBIDDEN, "private")));
+        }
+        Ok(None)
+    }
+
+    let router = Router::new()
+        .middleware(middleware)
+        .page(PageRoute::new("/", home));
+
+    let response = router
+        .handle(Request::new(Method::Get, "/private"))
+        .expect("middleware response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.body(), b"private");
+
+    let response = router
+        .handle(Request::new(Method::Get, "/"))
+        .expect("continued request");
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[test]
 fn rendering_failures_return_internal_server_error() {
     let router = Router::new().page(PageRoute::new("/invalid", invalid));
     let response = router

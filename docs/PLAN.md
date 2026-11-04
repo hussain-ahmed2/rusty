@@ -24,6 +24,7 @@ These concepts are intentionally kept close to Next.js:
 | `src/app/api/*/route.ts` | `src/app/api/*/route.rs` |
 | `"use server"` | `#[server]` |
 | `"use client"` | `#[client]` |
+| `src/middleware.ts` | `src/middleware.rs` |
 | Server Components | Server-rendered Rust components |
 | Server Actions | Typed Rust server functions |
 | JSX | `view! { ... }` |
@@ -255,6 +256,8 @@ Deliverables completed:
   registry.
 - Page, layout, error-boundary, not-found, API-method, and `#[server]` RPC
   registration contracts.
+- File-based `src/middleware.rs` discovery with synchronous short-circuit or
+  continue semantics before routes and static assets.
 - Native `Router` dispatch for pages, API routes, RPC functions, and development
   diagnostics.
 - `rusty dev` with rebuild-and-restart file watching, `RUSTY_DEV`, `RUSTY_HOST`,
