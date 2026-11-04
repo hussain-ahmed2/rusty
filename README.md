@@ -260,10 +260,11 @@ RUSTY_BASE_PATH=/rusty SITE_OUT_DIR=.pages cargo run --release -p site
 The exported directory is self-contained: the home page is written as
 `index.html`, every other route is written as both `docs.html` and a
 `docs/index.html` compatibility copy, public assets are copied, and `.nojekyll`
-is added. Links use extensionless URLs, so GitHub Pages serves `/rusty/docs`
+is added. The export also writes `sitemap.xml` and `robots.txt` from the route
+table. Links use extensionless URLs, so GitHub Pages serves `/rusty/docs`
 without a trailing-slash redirect. The `Deploy site` workflow runs the same
 command with the base path reported by `actions/configure-pages`, uploads
-`.pages`, and deploys it to GitHub Pages.
+`.pages`, deploys it to GitHub Pages, and smoke-tests the live routes.
 
 ## Continuous integration
 

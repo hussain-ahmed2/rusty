@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 
 use rusty::prelude::*;
 
+const DEFAULT_SITE_URL: &str = "https://hussain-ahmed2.github.io";
+
 fn main() -> Result<(), Box<dyn Error>> {
     content::set_base(&env::var("RUSTY_BASE_PATH").unwrap_or_default());
     let output =
@@ -49,6 +51,10 @@ fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
     }
     write_file(&output.join("404.html"), not_found.body())?;
     fs::write(output.join(".nojekyll"), [])?;
+
+    let origin = env::var("SITE_URL").unwrap_or_else(|_| DEFAULT_SITE_URL.to_owned());
+    write_file(&output.join("sitemap.xml"), sitemap(&origin).as_bytes())?;
+    write_file(&output.join("robots.txt"), robots(&origin).as_bytes())?;
 
     let public = Path::new(env!("CARGO_MANIFEST_DIR")).join("public");
     copy_directory(&public, output)?;
@@ -86,6 +92,47 @@ fn output_files(output: &Path, path: &str) -> io::Result<Vec<PathBuf>> {
         output.join(format!("{route}.html")),
         output.join(route).join("index.html"),
     ])
+}
+
+fn public_url(origin: &str, path: &str) -> String {
+    let origin = origin.trim_end_matches('/');
+    let base = crate::content::base_path();
+    if path == "/" {
+        format!("{origin}{base}")
+    } else {
+        format!("{origin}{base}{}", path.trim_start_matches('/'))
+    }
+}
+
+fn sitemap(origin: &str) -> String {
+    let mut xml = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n",
+    );
+    for path in crate::content::paths() {
+        xml.push_str(&format!(
+            "  <url><loc>{}</loc></url>\n",
+            xml_escape(&public_url(origin, &path))
+        ));
+    }
+    xml.push_str("</urlset>\n");
+    xml
+}
+
+fn robots(origin: &str) -> String {
+    format!(
+        "User-agent: *\nAllow: /\n\nSitemap: {}\n",
+        public_url(origin, "sitemap.xml")
+    )
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn write_file(path: &Path, body: &[u8]) -> io::Result<()> {
@@ -161,8 +208,18 @@ mod tests {
         assert!(output.join("docs/getting-started/index.html").is_file());
         assert!(output.join("about.html").is_file());
         assert!(output.join("404.html").is_file());
+        assert!(output.join("sitemap.xml").is_file());
+        assert!(output.join("robots.txt").is_file());
         assert!(output.join("styles.css").is_file());
         assert!(output.join(".nojekyll").is_file());
+
+        let sitemap = fs::read_to_string(output.join("sitemap.xml")).expect("sitemap");
+        assert!(sitemap.contains("<loc>https://hussain-ahmed2.github.io/docs</loc>"));
+        assert!(
+            sitemap.contains("<loc>https://hussain-ahmed2.github.io/docs/getting-started</loc>")
+        );
+        let robots = fs::read_to_string(output.join("robots.txt")).expect("robots");
+        assert!(robots.contains("Sitemap: https://hussain-ahmed2.github.io/sitemap.xml"));
 
         let docs = fs::read_to_string(output.join("docs/routing.html")).expect("docs");
         assert!(docs.contains("File-based routing"));

@@ -20,6 +20,10 @@ pub fn layout(children: Children) -> Element {
         <main class="page docs-page">
             <aside class="docs-sidebar" aria-label="Documentation">
                 <p class="eyebrow">"Documentation"</p>
+                <div class="docs-search">
+                    <input id="docs-search" type="search" placeholder="Search docs" aria-label="Search documentation" autocomplete="off">
+                </div>
+                <p id="docs-search-empty" class="docs-search-empty" aria-live="polite" hidden>"No matching pages."</p>
                 <ul>
                     <li><a href={overview}>"Overview"</a></li>
                     {links}

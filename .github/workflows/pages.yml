@@ -28,6 +28,7 @@ jobs:
         run: cargo run --release -p site
         env:
           RUSTY_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          SITE_URL: ${{ steps.pages.outputs.origin }}
           SITE_OUT_DIR: .pages
       - name: Check export
         run: |
@@ -36,6 +37,8 @@ jobs:
           test -f .pages/docs.html
           test -f .pages/docs/index.html
           test -f .pages/docs/getting-started.html
+          test -f .pages/sitemap.xml
+          test -f .pages/robots.txt
           test -f .pages/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -50,3 +53,25 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+      - name: Smoke test deployed routes
+        env:
+          BASE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          base="${BASE_URL%/}"
+          for path in / /docs /docs/getting-started /about; do
+            url="$base$path"
+            status=000
+            redirect=""
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              read -r status redirect < <(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "$url")
+              if [ "$status" = 200 ] && [ -z "$redirect" ]; then
+                break
+              fi
+              sleep 5
+            done
+            if [ "$status" != 200 ] || [ -n "$redirect" ]; then
+              echo "$url returned $status${redirect:+ redirecting to $redirect}" >&2
+              exit 1
+            fi
+            echo "$url -> $status"
+          done

@@ -336,12 +336,43 @@ hr {
   background: color-mix(in srgb, var(--surface) 80%, transparent);
 }
 
+.docs-search {
+  margin: 0 0 1rem;
+}
+
+.docs-search input {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.docs-search input:focus {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 1px;
+}
+
+.docs-search-empty {
+  margin: -0.25rem 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .docs-sidebar ul {
   display: grid;
   gap: 0.35rem;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 .docs-sidebar a {
@@ -504,6 +535,36 @@ hr {
   height: 1.95rem;
   margin: 0;
   border-radius: 0.55rem;
+}
+
+.skeleton-search {
+  width: 100%;
+  height: 2.45rem;
+  margin: 0 0 1rem;
+  border-radius: 0.6rem;
+}
+
+.skeleton-pager {
+  margin-top: 2.5rem;
+}
+
+.pager-skeleton {
+  width: 100%;
+  height: 5.3rem;
+  margin: 0;
+  border-radius: var(--radius);
+}
+
+.skeleton-rule {
+  width: 100%;
+  height: 1px;
+  margin: 2.5rem 0;
+  border-radius: 0;
+}
+
+.skeleton-link {
+  width: 10rem;
+  height: 1.2rem;
 }
 
 .card-skeleton {

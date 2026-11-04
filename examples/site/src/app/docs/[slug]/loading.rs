@@ -22,8 +22,12 @@ pub fn loading() -> Element {
                 <div class="skeleton skeleton-h3"></div>
                 <div class="skeleton"></div>
                 <div class="skeleton short"></div>
-                <div class="skeleton skeleton-h3"></div>
-                <div class="skeleton short"></div>
+                <nav class="docs-pager skeleton-pager" aria-hidden="true">
+                    <div class="skeleton pager-skeleton"></div>
+                    <div class="skeleton pager-skeleton"></div>
+                </nav>
+                <div class="skeleton skeleton-rule"></div>
+                <div class="skeleton skeleton-link"></div>
             </article>
         </main>
     })
