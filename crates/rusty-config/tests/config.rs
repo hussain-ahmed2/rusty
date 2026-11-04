@@ -47,6 +47,8 @@ fn defaults_apply_when_sections_and_fields_are_missing() {
     assert_eq!(config.app.public_dir, PathBuf::from("public"));
     assert_eq!(config.build.out_dir, PathBuf::from("target/rusty"));
     assert_eq!(config.build.client_dir, None);
+    assert_eq!(config.build.css.command, None);
+    assert!(config.build.css.inputs.is_empty());
     assert_eq!(config.dev.host, "127.0.0.1");
     assert_eq!(config.dev.port, 4100);
 }
@@ -84,6 +86,42 @@ fn unknown_fields_and_invalid_values_are_rejected() {
         RustyConfig::parse("[build]\nclient_dir = \"../client\"\n"),
         Err(ConfigError::Invalid { field, .. }) if field == "build.client_dir"
     ));
+    assert!(matches!(
+        RustyConfig::parse("[build.css]\ncommand = \"  \"\n"),
+        Err(ConfigError::Invalid { field, .. }) if field == "build.css.command"
+    ));
+    assert!(matches!(
+        RustyConfig::parse("[build.css]\ninputs = [\"styles\"]\n"),
+        Err(ConfigError::Invalid { field, .. }) if field == "build.css.inputs"
+    ));
+    assert!(matches!(
+        RustyConfig::parse("[build.css]\ncommand = \"sass\"\ninputs = [\"../styles\"]\n"),
+        Err(ConfigError::Invalid { field, .. }) if field == "build.css.inputs"
+    ));
+}
+
+#[test]
+fn parses_and_round_trips_css_preprocessing() {
+    let config = RustyConfig::parse(
+        r#"
+        [build.css]
+        command = "npx postcss styles/app.css -o public/app.css"
+        inputs = ["styles", "postcss.config.js"]
+        "#,
+    )
+    .expect("parse");
+
+    assert_eq!(
+        config.build.css.command.as_deref(),
+        Some("npx postcss styles/app.css -o public/app.css")
+    );
+    assert_eq!(
+        config.build.css.inputs,
+        [PathBuf::from("styles"), PathBuf::from("postcss.config.js")]
+    );
+
+    let encoded = config.to_toml().expect("serialize");
+    assert_eq!(RustyConfig::parse(&encoded).expect("restore"), config);
 }
 
 #[test]

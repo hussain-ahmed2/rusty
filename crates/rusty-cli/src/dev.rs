@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use rusty_compiler::AppCompiler;
-use rusty_config::RustyConfig;
+use rusty_config::{CssConfig, RustyConfig};
 use rusty_server::{HttpRouter, HttpServer, Response, ShutdownHandle, StatusCode};
 use serde_json::json;
 
@@ -48,8 +48,9 @@ impl DevRunner {
     ///
     /// The application is started with `cargo run` and `RUSTY_DEV=1`. When the
     /// application exits on its own, the supervisor waits for the next change
-    /// before restarting it. A configured WebAssembly client is built before
-    /// the first start and rebuilt when its inputs change.
+    /// before restarting it. Configured CSS preprocessing and the WebAssembly
+    /// client are built before the first start and rebuilt when their inputs
+    /// change.
     ///
     /// # Errors
     ///
@@ -59,8 +60,10 @@ impl DevRunner {
     pub fn run(self) -> Result<(), CliError> {
         let root = self.project.clone();
         let mut config = RustyConfig::load(&root)?;
-        let mut snapshot = snapshot_project(&root).map_err(|error| io_error(&root, &error))?;
+        let mut css_stale = !build_css(&root, &config);
         let mut client_stale = !build_client(&root, &config);
+        let mut snapshot =
+            snapshot_project(&root, &config.build.css).map_err(|error| io_error(&root, &error))?;
         let mut child = Some(self.spawn()?);
         println!(
             "Rusty dev is watching {}; press Ctrl-C to stop.",
@@ -69,9 +72,15 @@ impl DevRunner {
 
         loop {
             thread::sleep(POLL_INTERVAL);
-            match snapshot_project(&root) {
+            match snapshot_project(&root, &config.build.css) {
                 Ok(next) if next != snapshot => {
                     let loaded = RustyConfig::load(&root);
+                    let css_dirty = match &loaded {
+                        Ok(next_config) => {
+                            css_inputs_changed(&snapshot, &next, &next_config.build.css)
+                        }
+                        Err(_) => css_inputs_changed(&snapshot, &next, &config.build.css),
+                    };
                     let client_dirty = match &loaded {
                         Ok(next_config) => {
                             next_config
@@ -98,9 +107,13 @@ impl DevRunner {
                     if let Some(mut child) = child.take() {
                         stop(&mut child);
                     }
+                    if css_dirty || css_stale {
+                        css_stale = !build_css(&root, &config);
+                    }
                     if client_dirty || client_stale {
                         client_stale = !build_client(&root, &config);
                     }
+                    snapshot = snapshot_project(&root, &config.build.css).unwrap_or(snapshot);
                     child = Some(self.spawn()?);
                 }
                 Ok(_) => {
@@ -133,6 +146,17 @@ impl DevRunner {
             path: PathBuf::from("cargo"),
             message: error.to_string(),
         })
+    }
+}
+
+fn build_css(root: &Path, config: &RustyConfig) -> bool {
+    match crate::css::run(root, config) {
+        Ok(true) => true,
+        Ok(false) => true,
+        Err(error) => {
+            eprintln!("{error}");
+            false
+        }
     }
 }
 
@@ -172,6 +196,57 @@ fn is_client_input(path: &Path, client_dir: &Path) -> bool {
     path.starts_with(client_dir)
         || path == Path::new("rusty.toml")
         || path.file_name() == Some(std::ffi::OsStr::new("Cargo.toml"))
+}
+
+fn css_inputs_changed(
+    old: &BTreeMap<PathBuf, (SystemTime, u64)>,
+    new: &BTreeMap<PathBuf, (SystemTime, u64)>,
+    css: &CssConfig,
+) -> bool {
+    if css.command.is_none() {
+        return false;
+    }
+    old.iter()
+        .any(|(path, stamp)| new.get(path) != Some(stamp) && is_css_input(path, css))
+        || new
+            .iter()
+            .any(|(path, _)| !old.contains_key(path) && is_css_input(path, css))
+}
+
+fn is_css_input(path: &Path, css: &CssConfig) -> bool {
+    if css.command.is_none() {
+        return false;
+    }
+    if path == Path::new("rusty.toml") {
+        return true;
+    }
+    if !css.inputs.is_empty() {
+        return css.inputs.iter().any(|input| path.starts_with(input));
+    }
+    let extension = path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_ascii_lowercase);
+    matches!(
+        extension.as_deref(),
+        Some("css" | "scss" | "sass" | "less" | "pcss")
+    ) || path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|name| {
+            matches!(
+                name,
+                "package.json"
+                    | "tailwind.config.js"
+                    | "tailwind.config.cjs"
+                    | "tailwind.config.mjs"
+                    | "tailwind.config.ts"
+                    | "postcss.config.js"
+                    | "postcss.config.cjs"
+                    | "postcss.config.mjs"
+                    | "postcss.config.ts"
+            )
+        })
 }
 
 fn wait_status(child: &mut Child) -> Option<ExitStatus> {
@@ -292,13 +367,14 @@ fn spawn_watcher(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let root = compiler.project_root().to_path_buf();
-        let mut snapshot = snapshot_project(&root).unwrap_or_default();
+        let mut snapshot =
+            snapshot_project(&root, &compiler.config().build.css).unwrap_or_default();
         while !stop.load(Ordering::Acquire) {
             thread::sleep(POLL_INTERVAL);
             if stop.load(Ordering::Acquire) {
                 break;
             }
-            let Ok(next) = snapshot_project(&root) else {
+            let Ok(next) = snapshot_project(&root, &compiler.config().build.css) else {
                 continue;
             };
             if next != snapshot {
@@ -456,9 +532,12 @@ fn escape_html(text: &str) -> String {
     escaped
 }
 
-fn snapshot_project(root: &Path) -> std::io::Result<BTreeMap<PathBuf, (SystemTime, u64)>> {
+fn snapshot_project(
+    root: &Path,
+    css: &CssConfig,
+) -> std::io::Result<BTreeMap<PathBuf, (SystemTime, u64)>> {
     let mut files = BTreeMap::new();
-    visit(root, root, &mut files)?;
+    visit(root, root, &mut files, css)?;
     Ok(files)
 }
 
@@ -466,6 +545,7 @@ fn visit(
     root: &Path,
     directory: &Path,
     files: &mut BTreeMap<PathBuf, (SystemTime, u64)>,
+    css: &CssConfig,
 ) -> std::io::Result<()> {
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
@@ -478,12 +558,14 @@ fn visit(
             if matches!(name.as_ref(), "target" | ".git" | "node_modules") {
                 continue;
             }
-            visit(root, &path, files)?;
-        } else if file_type.is_file() && is_watched_file(&name) {
-            let metadata = entry.metadata()?;
-            let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
-            files.insert(relative, (modified, metadata.len()));
+            visit(root, &path, files, css)?;
+        } else if file_type.is_file() {
+            let relative = path.strip_prefix(root).unwrap_or(&path);
+            if is_watched_file(&name) || is_css_input(relative, css) {
+                let metadata = entry.metadata()?;
+                let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                files.insert(relative.to_path_buf(), (modified, metadata.len()));
+            }
         }
     }
     Ok(())
@@ -507,7 +589,8 @@ fn write_state(state: &Arc<RwLock<DevState>>) -> std::sync::RwLockWriteGuard<'_,
 
 #[cfg(test)]
 mod tests {
-    use super::client_inputs_changed;
+    use super::{client_inputs_changed, css_inputs_changed, is_css_input};
+    use rusty_config::CssConfig;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime};
@@ -564,5 +647,59 @@ mod tests {
             ("Cargo.toml", 2),
         ]);
         assert!(client_inputs_changed(&old, &dependency_changed, client));
+    }
+
+    #[test]
+    fn only_css_inputs_trigger_css_rebuilds() {
+        let css = CssConfig {
+            command: Some("sass styles/app.scss public/app.css".to_owned()),
+            inputs: vec![PathBuf::from("styles"), PathBuf::from("sass.config.js")],
+        };
+        let old = snapshot(&[
+            ("styles/app.scss", 1),
+            ("sass.config.js", 1),
+            ("src/app/page.rs", 1),
+        ]);
+        let rust_changed = snapshot(&[
+            ("styles/app.scss", 1),
+            ("sass.config.js", 1),
+            ("src/app/page.rs", 2),
+        ]);
+        assert!(!css_inputs_changed(&old, &rust_changed, &css));
+
+        let styles_changed = snapshot(&[
+            ("styles/app.scss", 2),
+            ("sass.config.js", 1),
+            ("src/app/page.rs", 1),
+        ]);
+        assert!(css_inputs_changed(&old, &styles_changed, &css));
+
+        let config_changed = snapshot(&[
+            ("styles/app.scss", 1),
+            ("sass.config.js", 2),
+            ("src/app/page.rs", 1),
+        ]);
+        assert!(css_inputs_changed(&old, &config_changed, &css));
+    }
+
+    #[test]
+    fn css_defaults_watch_stylesheets_and_tool_configs() {
+        let css = CssConfig {
+            command: Some("postcss styles/app.css -o public/app.css".to_owned()),
+            inputs: Vec::new(),
+        };
+        assert!(is_css_input(Path::new("styles/app.css"), &css));
+        assert!(is_css_input(Path::new("styles/app.scss"), &css));
+        assert!(is_css_input(Path::new("tailwind.config.js"), &css));
+        assert!(is_css_input(Path::new("package.json"), &css));
+        assert!(!is_css_input(Path::new("src/app/page.rs"), &css));
+
+        let disabled = CssConfig::default();
+        assert!(!is_css_input(Path::new("styles/app.css"), &disabled));
+        assert!(!css_inputs_changed(
+            &snapshot(&[("styles/app.css", 1)]),
+            &snapshot(&[("styles/app.css", 2)]),
+            &disabled
+        ));
     }
 }

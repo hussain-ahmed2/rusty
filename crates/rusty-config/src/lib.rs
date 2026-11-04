@@ -21,6 +21,10 @@
 //! out_dir = "target/rusty"
 //! client_dir = "client"
 //!
+//! [build.css]
+//! command = "npx tailwindcss -i ./styles/app.css -o ./public/assets/app.css"
+//! inputs = ["styles", "tailwind.config.js"]
+//!
 //! [dev]
 //! host = "127.0.0.1"
 //! port = 3000
@@ -133,6 +137,8 @@ pub struct BuildConfig {
     /// Optional Cargo package that builds the browser client to WebAssembly.
     /// The package must produce a `cdylib`; relative to the project root.
     pub client_dir: Option<PathBuf>,
+    /// Optional external CSS preprocessing command.
+    pub css: CssConfig,
 }
 
 impl Default for BuildConfig {
@@ -140,8 +146,27 @@ impl Default for BuildConfig {
         Self {
             out_dir: PathBuf::from("target/rusty"),
             client_dir: None,
+            css: CssConfig::default(),
         }
     }
+}
+
+/// External CSS preprocessing configuration.
+///
+/// Rusty does not parse or transform CSS itself. When `command` is set, the
+/// CLI runs it with the project root as the working directory before building
+/// or starting the development server. This supports tools such as PostCSS,
+/// Tailwind CSS, and Sass without coupling Rusty to their configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CssConfig {
+    /// Shell command used to compile or preprocess CSS. The command inherits
+    /// the process environment, so local tool wrappers such as `npx` work.
+    pub command: Option<String>,
+    /// Files or directories whose changes trigger another preprocessing run in
+    /// development. Paths are relative to the project root. When empty, Rusty
+    /// watches common CSS extensions and tool configuration files instead.
+    pub inputs: Vec<PathBuf>,
 }
 
 /// Development server configuration.
@@ -271,6 +296,24 @@ impl RustyConfig {
         validate_relative("build.out_dir", &self.build.out_dir)?;
         if let Some(client_dir) = &self.build.client_dir {
             validate_relative("build.client_dir", client_dir)?;
+        }
+        match &self.build.css.command {
+            Some(command) if command.trim().is_empty() => {
+                return Err(ConfigError::Invalid {
+                    field: "build.css.command".to_owned(),
+                    message: "the command cannot be empty".to_owned(),
+                });
+            }
+            None if !self.build.css.inputs.is_empty() => {
+                return Err(ConfigError::Invalid {
+                    field: "build.css.inputs".to_owned(),
+                    message: "inputs require build.css.command".to_owned(),
+                });
+            }
+            _ => {}
+        }
+        for input in &self.build.css.inputs {
+            validate_relative("build.css.inputs", input)?;
         }
         if self.dev.host.trim().is_empty() {
             return Err(ConfigError::Invalid {

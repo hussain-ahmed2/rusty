@@ -13,9 +13,10 @@
 //!
 //! `check` analyzes routes and server functions without writing files.
 //! `generate` writes the analyzed application manifest under the configured
-//! output directory. `build` compiles the application, any configured
-//! WebAssembly client, and a standalone deployment bundle. `start` runs the
-//! application, and `dev` rebuilds and restarts it when source files change.
+//! output directory. `build` runs configured CSS preprocessing, compiles the
+//! application and any configured WebAssembly client, and writes a standalone
+//! deployment bundle. `start` runs the application, and `dev` rebuilds and
+//! restarts it when source files change.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -32,6 +33,7 @@ use rusty_server::ServerError;
 
 mod bundle;
 mod cargo;
+mod css;
 mod dev;
 mod wasm;
 
@@ -46,7 +48,7 @@ Usage:
   rusty check [--project <path>]    Analyze routes and server functions
   rusty generate [--project <path>] Write the application manifest
   rusty build [--project <path>] [--release]
-                                    Build native, client, and deployment artifacts
+                                    Build CSS, native, client, and deployment artifacts
   rusty start [--project <path>] [--release]
                                     Run the compiled application
   rusty dev [--project <path>] [--host <host>] [--port <port>]
@@ -83,7 +85,7 @@ pub enum Command {
         /// Project root.
         project: PathBuf,
     },
-    /// Compiles the application with Cargo.
+    /// Runs CSS preprocessing and compiles the application with Cargo.
     Build {
         /// Project root.
         project: PathBuf,
@@ -164,6 +166,8 @@ pub enum CliError {
     Server(String),
     /// The WebAssembly client build failed.
     Client(String),
+    /// CSS preprocessing failed.
+    Css(String),
     /// The deployment bundle build failed.
     Bundle(String),
     /// A child command exited unsuccessfully.
@@ -204,6 +208,7 @@ impl fmt::Display for CliError {
             Self::Compile(error) => error.fmt(formatter),
             Self::Server(message) => write!(formatter, "server error: {message}"),
             Self::Client(message) => write!(formatter, "client build failed: {message}"),
+            Self::Css(message) => write!(formatter, "CSS preprocessing failed: {message}"),
             Self::Bundle(message) => write!(formatter, "deployment bundle failed: {message}"),
             Self::CommandFailed { command, status } => match status {
                 Some(status) => write!(formatter, "`{command}` failed with status {status}"),
@@ -498,6 +503,7 @@ pub fn execute(command: Command) -> Result<Report, CliError> {
         Command::Build { project, release } => {
             let compiler = AppCompiler::from_project(&project)?;
             let config = compiler.config().clone();
+            css::run(&project, &config)?;
             let manifest = compiler.analyze()?;
             compiler.write_manifest(&manifest)?;
             run_cargo(&project, "build", release)?;

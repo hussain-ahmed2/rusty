@@ -161,6 +161,30 @@ fn parses_commands_and_usage_errors() {
 }
 
 #[test]
+fn build_runs_css_preprocessing_before_cargo() {
+    let directory = TempDir::new("css-build");
+    let project = directory.path.join("my-app");
+    rusty_cli::run(["new", project.to_str().expect("utf8")]).expect("create");
+    let config_path = project.join("rusty.toml");
+    let mut config = fs::read_to_string(&config_path).expect("rusty.toml");
+    config.push_str("\n[build.css]\ncommand = \"exit 7\"\n");
+    fs::write(&config_path, config).expect("write config");
+
+    let error = rusty_cli::run([
+        "build".to_owned(),
+        format!("--project={}", project.display()),
+    ])
+    .expect_err("css failure");
+    assert!(matches!(
+        error,
+        CliError::CommandFailed {
+            status: Some(7),
+            ..
+        }
+    ));
+}
+
+#[test]
 fn scaffolds_a_project_and_analyzes_it() {
     let directory = TempDir::new("scaffold");
     let project = directory.path.join("my-app");

@@ -28,6 +28,7 @@ bundles.
 - [x] Development rebuild-and-restart loop with file watching
 - [x] Blocking HTTP/1.1 transport with bounded headers and bodies
 - [x] Public static asset serving and validated build-time asset manifests
+- [x] External CSS preprocessing for PostCSS, Tailwind CSS, Sass, and similar tools
 - [x] WebAssembly client builds and automatic client asset serving
 - [x] Standalone deployment bundles with app, public, and client artifacts
 - [x] Async page/API handlers and chunked streaming SSR
@@ -287,6 +288,10 @@ public_dir = "public"
 out_dir = "target/rusty"
 # client_dir = "client"
 
+# [build.css]
+# command = "npx tailwindcss -i ./styles/app.css -o ./public/assets/app.css"
+# inputs = ["styles", "tailwind.config.js"]
+
 [dev]
 host = "127.0.0.1"
 port = 3000
@@ -302,6 +307,33 @@ ephemeral port. `rusty check` analyzes the application without writing, while
 watched files change. In development the runtime serves `/__rusty/health` and
 `/__rusty/status`; status reports the generated page, API, and server-function
 counts. `rusty build` writes the asset manifest before compiling.
+
+### CSS preprocessing
+
+Rusty serves and bundles CSS but does not parse or transform it. Configure an
+external command for PostCSS, Tailwind CSS, Sass, or any other preprocessor:
+
+```toml
+[build.css]
+command = "npx tailwindcss -i ./styles/app.css -o ./public/assets/app.css"
+inputs = ["styles", "tailwind.config.js"]
+```
+
+The command runs with the project root as its working directory. `rusty build`
+runs it before analyzing the asset manifest and compiling, so generated files
+under `public` are served and included in the deployment bundle. `rusty dev`
+runs it at startup and again when a file under `build.css.inputs` or
+`rusty.toml` changes. When `inputs` is empty, Rusty watches common stylesheet
+extensions (`.css`, `.scss`, `.sass`, `.less`, `.pcss`) plus `package.json`,
+Tailwind, and PostCSS configuration files. List custom tool configuration files
+in `inputs` if they use another name.
+
+Commands run through `sh -c` on Unix and `cmd /C` on Windows, so quoted
+arguments, environment variables, and local wrappers such as `npx` work as they
+do in a terminal. The tools themselves must already be installed. Preprocessing
+errors fail `rusty build` and are reported but do not stop the `rusty dev`
+watcher. `rusty check` and `rusty generate` only analyze Rust sources and do not
+run preprocessing commands.
 
 ### WebAssembly client builds
 
