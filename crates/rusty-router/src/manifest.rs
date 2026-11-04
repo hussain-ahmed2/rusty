@@ -18,6 +18,8 @@ pub struct RouteEntry {
     page: PathBuf,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     layouts: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    metadata: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     loading: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -43,6 +45,13 @@ impl RouteEntry {
     #[must_use]
     pub fn layouts(&self) -> &[PathBuf] {
         &self.layouts
+    }
+
+    /// Returns metadata module paths from the root to the nearest metadata
+    /// module.
+    #[must_use]
+    pub fn metadata(&self) -> &[PathBuf] {
+        &self.metadata
     }
 
     /// Returns the nearest loading boundary module.
@@ -107,6 +116,7 @@ impl RouteManifest {
     ///
     /// - `page.rs` creates a rendered route and `route.rs` creates an API route.
     /// - `layout.rs` wraps that route and its descendants.
+    /// - `metadata.rs` contributes document metadata to that route and its descendants.
     /// - `loading.rs`, `error.rs`, and `not_found.rs` apply to descendants.
     /// - `[name]` captures one segment and `[...name]` captures the rest.
     /// - `(group)` directories organize files without adding a URL segment.
@@ -390,6 +400,7 @@ fn best_match<'a, T>(
 struct WalkState {
     segments: Vec<RouteSegment>,
     layouts: Vec<PathBuf>,
+    metadata: Vec<PathBuf>,
     loading: Option<PathBuf>,
     error: Option<PathBuf>,
     not_found: Option<PathBuf>,
@@ -400,6 +411,7 @@ struct DirectoryScan {
     page: Option<PathBuf>,
     route: Option<PathBuf>,
     layout: Option<PathBuf>,
+    metadata: Option<PathBuf>,
     loading: Option<PathBuf>,
     error: Option<PathBuf>,
     not_found: Option<PathBuf>,
@@ -418,6 +430,9 @@ fn visit(
     if let Some(layout) = scan.layout {
         state.layouts.push(relative_path(app_root, &layout));
     }
+    if let Some(metadata) = scan.metadata {
+        state.metadata.push(relative_path(app_root, &metadata));
+    }
     if let Some(loading) = scan.loading {
         state.loading = Some(relative_path(app_root, &loading));
     }
@@ -435,6 +450,7 @@ fn visit(
             pattern: pattern.clone(),
             page: relative_path(app_root, &page),
             layouts: state.layouts.clone(),
+            metadata: state.metadata.clone(),
             loading: state.loading.clone(),
             error: state.error.clone(),
             not_found: state.not_found.clone(),
@@ -512,6 +528,7 @@ fn scan_directory(directory: &Path) -> Result<DirectoryScan, RouterError> {
             Some("page") => scan.page = Some(path),
             Some("route") => scan.route = Some(path),
             Some("layout") => scan.layout = Some(path),
+            Some("metadata") => scan.metadata = Some(path),
             Some("loading") => scan.loading = Some(path),
             Some("error") => scan.error = Some(path),
             Some("not_found") => scan.not_found = Some(path),

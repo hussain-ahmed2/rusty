@@ -30,6 +30,7 @@ bundles.
 - [x] Public static asset serving, validated build-time manifests, and conditional caching
 - [x] Gzip compression for complete dynamic and static responses
 - [x] File-based application middleware in `src/middleware.rs`
+- [x] Inherited document metadata from `src/app/metadata.rs`
 - [x] External CSS preprocessing for PostCSS, Tailwind CSS, Sass, and similar tools
 - [x] WebAssembly client builds and automatic client asset serving
 - [x] Standalone deployment bundles with app, public, and client artifacts
@@ -189,6 +190,7 @@ Rusty applications use `src/app` for file-system routing:
 ```text
 src/app/
 ├── layout.rs
+├── metadata.rs
 ├── page.rs
 ├── error.rs
 ├── not_found.rs
@@ -235,6 +237,14 @@ page exports `pub fn not_found() -> Element`. API route modules export lower-cas
 HTTP methods such as `pub fn get(context: &mut RequestContext) ->
 Result<Response, ServerError>`. `#[server]` markers discovered outside `src/app`
 are registered automatically from their declared module paths.
+
+Metadata modules export `pub fn metadata(context: &mut RequestContext) ->
+Metadata` and are inherited from the root to the nearest module. Build metadata
+with `Metadata::new()` and chain `with_title`, `with_description`,
+`with_canonical`, `with_name`, or `with_property`. Nearer modules override
+scalar values and same-key meta tags. The generated title, description,
+canonical link, and matching meta tags replace static versions in layout
+documents; pages without layouts receive a generated document head.
 
 Application middleware lives in `src/middleware.rs` and exports:
 

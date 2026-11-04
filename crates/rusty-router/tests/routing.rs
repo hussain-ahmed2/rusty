@@ -43,12 +43,14 @@ fn nested_app() -> TempApp {
     let app = TempApp::new("nested");
     for file in [
         "layout.rs",
+        "metadata.rs",
         "page.rs",
         "loading.rs",
         "error.rs",
         "not_found.rs",
         "about/page.rs",
         "blog/layout.rs",
+        "blog/metadata.rs",
         "blog/[slug]/page.rs",
         "blog/[slug]/loading.rs",
         "docs/[...path]/page.rs",
@@ -83,6 +85,7 @@ fn discovers_pages_layouts_boundaries_and_groups() {
     let root = &manifest.routes()[0];
     assert_eq!(root.page(), Path::new("page.rs"));
     assert_eq!(root.layouts(), [PathBuf::from("layout.rs")]);
+    assert_eq!(root.metadata(), [PathBuf::from("metadata.rs")]);
     assert_eq!(root.loading(), Some(Path::new("loading.rs")));
     assert_eq!(root.error(), Some(Path::new("error.rs")));
     assert_eq!(root.not_found(), Some(Path::new("not_found.rs")));
@@ -95,6 +98,13 @@ fn discovers_pages_layouts_boundaries_and_groups() {
     assert_eq!(
         blog.layouts(),
         [PathBuf::from("layout.rs"), PathBuf::from("blog/layout.rs")]
+    );
+    assert_eq!(
+        blog.metadata(),
+        [
+            PathBuf::from("metadata.rs"),
+            PathBuf::from("blog/metadata.rs")
+        ]
     );
     assert_eq!(blog.loading(), Some(Path::new("blog/[slug]/loading.rs")));
 

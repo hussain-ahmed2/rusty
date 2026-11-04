@@ -46,6 +46,32 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
             .iter()
             .map(|path| modules.register(&app_root, path))
             .collect::<syn::Result<Vec<_>>>()?;
+        let metadata = route
+            .metadata()
+            .iter()
+            .map(|path| {
+                let module = modules.register(&app_root, path)?;
+                let Some(function) = modules.functions(&module).get("metadata") else {
+                    return Err(syn::Error::new(
+                        Span::call_site(),
+                        format!(
+                            "metadata module `{}` must export `pub fn metadata`",
+                            module.display()
+                        ),
+                    ));
+                };
+                if function.is_async {
+                    return Err(syn::Error::new(
+                        Span::call_site(),
+                        format!(
+                            "metadata module `{}` metadata must be synchronous",
+                            module.display()
+                        ),
+                    ));
+                }
+                Ok(module)
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
         let loading = route
             .loading()
             .map(|path| modules.register(&app_root, path))
@@ -54,7 +80,7 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
             .error()
             .map(|path| modules.register(&app_root, path))
             .transpose()?;
-        routes.push((route, page, layouts, loading, error));
+        routes.push((route, page, layouts, metadata, loading, error));
     }
 
     let mut apis = Vec::new();
@@ -115,11 +141,15 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
     }
 
     let mut registrations = Vec::new();
-    for (route, page, layouts, loading, error) in routes {
+    for (route, page, layouts, metadata, loading, error) in routes {
         let pattern = route.pattern().to_string();
         let page_async = modules.is_async(&page, "page");
         let page = modules.ident(&page);
         let layouts = layouts
+            .iter()
+            .map(|module| modules.ident(module))
+            .collect::<Vec<_>>();
+        let metadata = metadata
             .iter()
             .map(|module| modules.ident(module))
             .collect::<Vec<_>>();
@@ -153,6 +183,7 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
             router = router.page(
                 #page_route
                     .layouts(&[#(#layouts::layout),*])
+                    .metadata(&[#(#metadata::metadata),*])
                     #loading
                     #error
             );

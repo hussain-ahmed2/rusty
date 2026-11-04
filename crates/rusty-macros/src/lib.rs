@@ -37,8 +37,10 @@ use syn::parse_macro_input;
 ///
 /// Page modules export `pub fn page(context: &mut RequestContext) ->
 /// Result<Element, ServerError>` or an `async fn` with the same signature.
-/// Layouts export `pub fn layout(children: Children) -> Element`. API routes
-/// export lower-case HTTP method handlers such as `pub fn get(context: &mut
+/// Layouts export `pub fn layout(children: Children) -> Element`. Metadata
+/// modules export `pub fn metadata(context: &mut RequestContext) -> Metadata`;
+/// they are inherited from the root to the nearest module. API routes export
+/// lower-case HTTP method handlers such as `pub fn get(context: &mut
 /// RequestContext) -> Result<Response, ServerError>`; those handlers may also be
 /// declared `async`. Loading boundaries export `pub fn loading() -> Element`.
 ///

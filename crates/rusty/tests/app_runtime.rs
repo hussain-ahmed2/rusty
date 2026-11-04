@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use rusty::app::{ApiHandler, ApiMethods, AsyncApiFuture, AsyncPageFuture, PageRoute, Router};
+use rusty::app::{
+    ApiHandler, ApiMethods, AsyncApiFuture, AsyncPageFuture, Metadata, PageRoute, Router,
+};
 use rusty::prelude::*;
 
 struct TempDir {
@@ -48,6 +50,47 @@ fn broken(_context: &mut RequestContext) -> Result<Element, ServerError> {
 
 fn root_layout(children: Children) -> Element {
     view! { <main>{children}</main> }
+}
+
+fn document_layout(children: Children) -> Element {
+    Element::fragment([
+        Element::raw_html("<!doctype html>"),
+        view! {
+            <html>
+                <head>
+                    <title>"Layout title"</title>
+                    <meta name="description" content="Layout description">
+                    <meta property="og:title" content="Layout title">
+                    <meta name="twitter:card" content="player">
+                    <link rel="canonical" href="https://example.test/layout">
+                </head>
+                <body>{children}</body>
+            </html>
+        },
+    ])
+}
+
+fn root_metadata(_context: &mut RequestContext) -> Metadata {
+    Metadata::new()
+        .with_title("Root title")
+        .with_description("Root description")
+        .with_property("og:title", "Root title")
+}
+
+fn page_metadata(context: &mut RequestContext) -> Metadata {
+    let slug = context.param("slug").unwrap_or("missing").to_owned();
+    Metadata::new()
+        .with_title(format!("Page {slug}"))
+        .with_description("Page description")
+        .with_canonical(format!("https://example.test/blog/{slug}"))
+        .with_property("og:title", format!("Page {slug}"))
+        .with_name("twitter:card", "summary")
+}
+
+fn plain_metadata(_context: &mut RequestContext) -> Metadata {
+    Metadata::new()
+        .with_description("A plain page")
+        .with_name("robots", "noindex")
 }
 
 fn error_page(error: &ServerError) -> Element {
@@ -134,6 +177,45 @@ fn renders_pages_with_layouts_and_parameters() {
     let body = String::from_utf8_lossy(response.body());
     assert!(body.starts_with("<!doctype html>"));
     assert!(body.contains("<p>rusty</p>"));
+}
+
+#[test]
+fn metadata_is_inherited_and_replaces_layout_head_tags() {
+    let router = Router::new().page(
+        PageRoute::new("/blog/[slug]", slug)
+            .layouts(&[document_layout])
+            .metadata(&[root_metadata, page_metadata]),
+    );
+
+    let response = router
+        .handle(Request::new(Method::Get, "/blog/rusty"))
+        .expect("page");
+    let body = String::from_utf8_lossy(response.body());
+
+    assert_eq!(body.matches("<title>").count(), 1);
+    assert!(body.contains("<title>Page rusty</title>"));
+    assert!(body.contains("<meta name=\"description\" content=\"Page description\">"));
+    assert!(body.contains("<link rel=\"canonical\" href=\"https://example.test/blog/rusty\">"));
+    assert!(body.contains("<meta property=\"og:title\" content=\"Page rusty\">"));
+    assert!(body.contains("<meta name=\"twitter:card\" content=\"summary\">"));
+    assert!(!body.contains("Layout title"));
+    assert!(!body.contains("Layout description"));
+    assert!(!body.contains("https://example.test/layout"));
+    assert!(!body.contains("content=\"player\""));
+}
+
+#[test]
+fn metadata_without_a_title_keeps_the_default_document_title() {
+    let router = Router::new().page(PageRoute::new("/plain", home).metadata(&[plain_metadata]));
+
+    let response = router
+        .handle(Request::new(Method::Get, "/plain"))
+        .expect("page");
+    let body = String::from_utf8_lossy(response.body());
+
+    assert!(body.contains("<title>Rusty</title>"));
+    assert!(body.contains("<meta name=\"description\" content=\"A plain page\">"));
+    assert!(body.contains("<meta name=\"robots\" content=\"noindex\">"));
 }
 
 #[test]

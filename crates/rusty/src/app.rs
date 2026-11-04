@@ -26,6 +26,8 @@ use rusty_server::{
 use rusty_ssr::render_to_chunks;
 
 mod assets;
+pub use metadata::Metadata;
+mod metadata;
 mod navigation;
 
 /// Renders a page for a matched route.
@@ -72,6 +74,9 @@ impl From<SyncApiHandler> for ApiHandler {
 
 /// Wraps page content in a layout.
 pub type Layout = fn(Children) -> Element;
+
+/// Produces document metadata for a matched route.
+pub type MetadataHandler = fn(&mut RequestContext) -> Metadata;
 
 /// Renders an error boundary for a failed page.
 pub type ErrorHandler = fn(&ServerError) -> Element;
@@ -139,6 +144,7 @@ pub struct PageRoute {
     pattern: String,
     page: PageEndpoint,
     layouts: Vec<Layout>,
+    metadata: Vec<MetadataHandler>,
     loading: Option<LoadingHandler>,
     error: Option<ErrorHandler>,
 }
@@ -151,6 +157,7 @@ impl PageRoute {
             pattern: pattern.into(),
             page: PageEndpoint::Sync(page),
             layouts: Vec::new(),
+            metadata: Vec::new(),
             loading: None,
             error: None,
         }
@@ -163,6 +170,7 @@ impl PageRoute {
             pattern: pattern.into(),
             page: PageEndpoint::Async(page),
             layouts: Vec::new(),
+            metadata: Vec::new(),
             loading: None,
             error: None,
         }
@@ -172,6 +180,13 @@ impl PageRoute {
     #[must_use]
     pub fn layouts(mut self, layouts: &[Layout]) -> Self {
         self.layouts = layouts.to_vec();
+        self
+    }
+
+    /// Sets metadata handlers from the root to the nearest metadata module.
+    #[must_use]
+    pub fn metadata(mut self, handlers: &[MetadataHandler]) -> Self {
+        self.metadata = handlers.to_vec();
         self
     }
 
@@ -478,7 +493,10 @@ fn add_method(
 
 fn render_page(route: &PageRoute, context: &mut RequestContext, navigation: &str) -> Response {
     match route.page.render(context) {
-        Ok(page) => render_success(page, &route.layouts, navigation),
+        Ok(page) => {
+            let metadata = resolve_metadata(&route.metadata, context);
+            render_success(page, &route.layouts, navigation, &metadata)
+        }
         Err(error) => {
             let page = route
                 .error
@@ -488,8 +506,21 @@ fn render_page(route: &PageRoute, context: &mut RequestContext, navigation: &str
     }
 }
 
-fn render_success(page: Element, layouts: &[Layout], navigation: &str) -> Response {
-    render_document(page, layouts, StatusCode::OK, "Rusty", navigation)
+fn resolve_metadata(handlers: &[MetadataHandler], context: &mut RequestContext) -> Metadata {
+    let mut metadata = Metadata::new();
+    for handler in handlers {
+        metadata = metadata.merge(handler(context));
+    }
+    metadata
+}
+
+fn render_success(
+    page: Element,
+    layouts: &[Layout],
+    navigation: &str,
+    metadata: &Metadata,
+) -> Response {
+    render_document(page, layouts, StatusCode::OK, "Rusty", navigation, metadata)
 }
 
 fn render_failure(page: Element, layouts: &[Layout], navigation: &str) -> Response {
@@ -499,6 +530,7 @@ fn render_failure(page: Element, layouts: &[Layout], navigation: &str) -> Respon
         StatusCode::INTERNAL_SERVER_ERROR,
         "Rusty",
         navigation,
+        &Metadata::new(),
     )
 }
 
@@ -508,14 +540,21 @@ fn render_document(
     status: StatusCode,
     title: &str,
     navigation: &str,
+    metadata: &Metadata,
 ) -> Response {
     let page = apply_layouts(page, layouts);
     let navigation = navigation::markup(navigation);
     match render_to_chunks(&page) {
         Ok(chunks) if layouts.is_empty() => {
             let mut stream = Vec::with_capacity(chunks.len() + 3);
+            let default_title = if metadata.has_title() {
+                String::new()
+            } else {
+                format!("<title>{title}</title>")
+            };
             stream.push(format!(
-                "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title></head><body>"
+                "<!doctype html><html><head><meta charset=\"utf-8\">{default_title}{}</head><body>",
+                metadata.markup()
             ));
             stream.extend(chunks);
             stream.push(navigation);
@@ -523,11 +562,184 @@ fn render_document(
             Response::stream_html(status, stream)
         }
         Ok(mut chunks) => {
+            insert_metadata(&mut chunks, metadata);
             insert_navigation(&mut chunks, navigation);
             Response::stream_html(status, chunks)
         }
         Err(error) => render_error_response(&error.to_string()),
     }
+}
+
+fn insert_metadata(chunks: &mut Vec<String>, metadata: &Metadata) {
+    if metadata.is_empty() {
+        return;
+    }
+    let mut document = chunks.concat();
+    if find_ascii_case_insensitive(&document, "</head>").is_none() {
+        return;
+    }
+    if metadata.has_title() {
+        remove_title_tags(&mut document);
+    }
+    remove_meta_tags(&mut document, metadata);
+    if metadata.canonical().is_some() {
+        remove_canonical_links(&mut document);
+    }
+    if let Some(index) = find_ascii_case_insensitive(&document, "</head>") {
+        document.insert_str(index, &metadata.markup());
+        *chunks = vec![document];
+    }
+}
+
+fn remove_title_tags(document: &mut String) {
+    loop {
+        let Some(start) = find_tag_start(document, 0, "title") else {
+            return;
+        };
+        let Some(open_end) = document[start..].find('>') else {
+            return;
+        };
+        let content_start = start + open_end + 1;
+        let Some(close) = find_ascii_case_insensitive_from(document, content_start, "</title>")
+        else {
+            return;
+        };
+        document.replace_range(start..close + "</title>".len(), "");
+    }
+}
+
+fn remove_meta_tags(document: &mut String, metadata: &Metadata) {
+    let mut search = 0;
+    while let Some(start) = find_tag_start(document, search, "meta") {
+        let Some(open_end) = document[start..].find('>') else {
+            return;
+        };
+        let end = start + open_end + 1;
+        let name = attribute_value(&document[start..end], "name");
+        let property = attribute_value(&document[start..end], "property");
+        if metadata.should_replace_meta(name.as_deref(), property.as_deref()) {
+            document.replace_range(start..end, "");
+            search = start;
+        } else {
+            search = end;
+        }
+    }
+}
+
+fn remove_canonical_links(document: &mut String) {
+    let mut search = 0;
+    while let Some(start) = find_tag_start(document, search, "link") {
+        let Some(open_end) = document[start..].find('>') else {
+            return;
+        };
+        let end = start + open_end + 1;
+        if attribute_value(&document[start..end], "rel")
+            .is_some_and(|value| value.eq_ignore_ascii_case("canonical"))
+        {
+            document.replace_range(start..end, "");
+            search = start;
+        } else {
+            search = end;
+        }
+    }
+}
+
+fn find_tag_start(document: &str, from: usize, tag: &str) -> Option<usize> {
+    let bytes = document.as_bytes();
+    let needle = format!("<{tag}");
+    let needle = needle.as_bytes();
+    let mut index = from;
+    while index + needle.len() <= bytes.len() {
+        if bytes[index..index + needle.len()].eq_ignore_ascii_case(needle) {
+            let next = index + needle.len();
+            if next == bytes.len()
+                || bytes[next].is_ascii_whitespace()
+                || matches!(bytes[next], b'/' | b'>')
+            {
+                return Some(index);
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
+fn find_ascii_case_insensitive(document: &str, needle: &str) -> Option<usize> {
+    find_ascii_case_insensitive_from(document, 0, needle)
+}
+
+fn find_ascii_case_insensitive_from(document: &str, from: usize, needle: &str) -> Option<usize> {
+    let bytes = document.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return Some(from.min(bytes.len()));
+    }
+    let mut index = from;
+    while index + needle.len() <= bytes.len() {
+        if bytes[index..index + needle.len()].eq_ignore_ascii_case(needle) {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn attribute_value(tag: &str, name: &str) -> Option<String> {
+    let bytes = tag.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        while index < bytes.len() && !is_attribute_name(bytes[index]) {
+            index += 1;
+        }
+        let start = index;
+        while index < bytes.len() && is_attribute_name(bytes[index]) {
+            index += 1;
+        }
+        if start == index {
+            index += 1;
+            continue;
+        }
+        let key = &tag[start..index];
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if index >= bytes.len() || bytes[index] != b'=' {
+            continue;
+        }
+        index += 1;
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if index >= bytes.len() {
+            return None;
+        }
+        let (value_start, value_end) = if matches!(bytes[index], b'"' | b'\'') {
+            let quote = bytes[index];
+            let value_start = index + 1;
+            index = value_start;
+            while index < bytes.len() && bytes[index] != quote {
+                index += 1;
+            }
+            let value_end = index;
+            index = (index + 1).min(bytes.len());
+            (value_start, value_end)
+        } else {
+            let value_start = index;
+            while index < bytes.len() && !bytes[index].is_ascii_whitespace() && bytes[index] != b'>'
+            {
+                index += 1;
+            }
+            (value_start, index)
+        };
+        if key.eq_ignore_ascii_case(name) {
+            return Some(tag[value_start..value_end].to_owned());
+        }
+    }
+    None
+}
+
+fn is_attribute_name(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':')
 }
 
 fn insert_navigation(chunks: &mut Vec<String>, navigation: String) {
@@ -557,6 +769,7 @@ fn render_not_found(route: &NotFoundRoute, navigation: &str) -> Response {
         StatusCode::NOT_FOUND,
         "Not Found",
         navigation,
+        &Metadata::new(),
     )
 }
 

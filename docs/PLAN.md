@@ -70,7 +70,7 @@ remain immediately recognizable.
 | `rusty-router` | File-based routing and route manifests | M6 |
 | `rusty-server` | HTTP runtime, middleware, request context | M7 |
 | `rusty-rpc` | Typed server functions | M7 |
-| `rusty-metadata` | SEO and metadata | M9 |
+| `rusty` app runtime | Route metadata and document-head generation | M9 |
 | `rusty-compiler` | Application analysis and code generation | M8 |
 | `rusty-build` | Native/WASM build orchestration (planned) | M8 |
 | `rusty-cli` | `new`, `check`, `generate`, `dev`, `build`, and `start` | M8 |
@@ -258,6 +258,8 @@ Deliverables completed:
   registration contracts.
 - File-based `src/middleware.rs` discovery with synchronous short-circuit or
   continue semantics before routes and static assets.
+- File-based `src/app/metadata.rs` discovery with inherited titles, descriptions,
+  canonical links, and named/property meta tags that replace static layout tags.
 - Native `Router` dispatch for pages, API routes, RPC functions, and development
   diagnostics.
 - `rusty dev` with rebuild-and-restart file watching, `RUSTY_DEV`, `RUSTY_HOST`,
@@ -290,14 +292,15 @@ adapters.
 ### Milestone 9 — Production features
 
 Static generation, metadata, caching, image handling, and deployment support.
-Static assets now emit content-based `ETag` and `Last-Modified` headers and
-support `If-None-Match` and `If-Modified-Since` conditional requests. Complete
-text, JSON, JavaScript, SVG, XML, and WebAssembly responses larger than 1 KiB are
+Static assets emit content-based `ETag` and `Last-Modified` headers and support
+`If-None-Match` and `If-Modified-Since` conditional requests. Complete text,
+JSON, JavaScript, SVG, XML, and WebAssembly responses larger than 1 KiB are
 gzip-compressed when negotiated, with `Vary: Accept-Encoding` and weak ETags.
-Streaming responses remain uncompressed. Static generation, metadata, image
-handling, and broader deployment support remain.
-A documentation website deployed through GitHub Pages will be added once static
-generation can produce the site.
+Streaming responses remain uncompressed. Route metadata from
+`src/app/metadata.rs` is inherited and replaces static layout head tags. Static
+generation, image handling, and broader deployment support remain.
+The documentation website is generated from `examples/site` and deployed through
+GitHub Pages.
 
 ## Milestone 1 architecture
 

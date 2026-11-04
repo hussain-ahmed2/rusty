@@ -368,9 +368,9 @@ pub mod prelude {
     };
     #[cfg(not(target_arch = "wasm32"))]
     pub use crate::{
-        authenticate, csrf, require_auth, AuthIdentity, Authenticator, BearerAuthenticator,
-        CsrfMiddleware, CsrfToken, Extensions, Handler, Headers, HttpRouter, Method, Middleware,
-        Next, Request, RequestContext, Response, RpcRegistry, ServerError, ServerInvoker,
-        StatusCode, CSRF_COOKIE, CSRF_HEADER,
+        app::Metadata, authenticate, csrf, require_auth, AuthIdentity, Authenticator,
+        BearerAuthenticator, CsrfMiddleware, CsrfToken, Extensions, Handler, Headers, HttpRouter,
+        Method, Middleware, Next, Request, RequestContext, Response, RpcRegistry, ServerError,
+        ServerInvoker, StatusCode, CSRF_COOKIE, CSRF_HEADER,
     };
 }

@@ -201,6 +201,9 @@ mod tests {
 
         let home = fs::read_to_string(output.join("index.html")).expect("home");
         assert!(home.contains("Build fast, typed web apps in Rust."));
+        assert!(home.contains("<title>Rusty — the Rust-native web framework</title>"));
+        assert_eq!(home.matches("<title>").count(), 1);
+        assert!(home.contains("content=\"Rusty is a Rust-native full-stack framework"));
         assert!(home.contains("__rusty_navigation_data"));
         assert!(home.contains("<meta name=\"rusty-base\" content=\"/\">"));
         assert!(home.contains("<style>"));
@@ -226,6 +229,11 @@ mod tests {
 
         let docs = fs::read_to_string(output.join("docs/routing.html")).expect("docs");
         assert!(docs.contains("File-based routing"));
+        assert!(docs.contains("<title>File-based routing — Rusty</title>"));
+        assert_eq!(docs.matches("<title>").count(), 1);
+        assert!(docs.contains(
+            "content=\"Layouts, dynamic segments, loading boundaries, and API routes from the file tree.\""
+        ));
         assert!(docs.contains("href=\"/docs/getting-started\""));
         assert!(!docs.contains("href=\"/docs/getting-started/\""));
         assert!(!home.contains("href=\"/docs/\""));
