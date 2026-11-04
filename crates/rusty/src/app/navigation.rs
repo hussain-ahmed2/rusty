@@ -128,6 +128,51 @@ const SCRIPT: &str = r#"<script>
     });
   } catch (_) {}
 
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+
+  function scrollPosition() {
+    return window.scrollY || window.pageYOffset || 0;
+  }
+
+  function rememberScroll() {
+    if (window.__rustyNavigation && window.__rustyNavigation.pending) return;
+    var state = history.state;
+    if (!state || !state.rusty) state = { rusty: true };
+    state.scrollY = scrollPosition();
+    history.replaceState(state, "", location.href);
+  }
+
+  if (!history.state || !history.state.rusty) {
+    history.replaceState({ rusty: true, scrollY: scrollPosition() }, "", location.href);
+  }
+
+  var scrollTimer = 0;
+  window.addEventListener("scroll", function () {
+    if (scrollTimer) return;
+    scrollTimer = setTimeout(function () {
+      scrollTimer = 0;
+      rememberScroll();
+    }, 100);
+  }, { passive: true });
+
+  function scrollAfterLoad(hash, position) {
+    requestAnimationFrame(function () {
+      var root = document.documentElement;
+      var behavior = root.style.scrollBehavior;
+      root.style.scrollBehavior = "auto";
+      if (hash) {
+        var target = document.getElementById(hash.slice(1));
+        if (target) {
+          target.scrollIntoView();
+          root.style.scrollBehavior = behavior;
+          return;
+        }
+      }
+      window.scrollTo(0, position);
+      root.style.scrollBehavior = behavior;
+    });
+  }
+
   function routePath(pathname) {
     var meta = document.querySelector('meta[name="rusty-base"]');
     var base = document.querySelector("base[href]");
@@ -164,18 +209,27 @@ const SCRIPT: &str = r#"<script>
     element.setAttribute("aria-live", "polite");
     element.setAttribute(
       "style",
-      "position:fixed;inset:0;z-index:2147483647;overflow:auto;background:Canvas;color:CanvasText"
+      "position:fixed;inset:0;z-index:2147483647;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:Canvas;color:CanvasText"
     );
     element.innerHTML = html || '<div style="padding:1rem;font:14px system-ui,sans-serif">Loading&hellip;</div>';
-    document.documentElement.appendChild(element);
+    (document.body || document.documentElement).appendChild(element);
     return element;
   }
 
   function navigate(url, push) {
     if (!window.__rustyNavigation) return;
     if (!window.__rustyNavigation.pending) {
+      if (push) rememberScroll();
       window.__rustyNavigation.pending = true;
       var current = overlay(loadingFor(new URL(url).pathname));
+      var root = document.documentElement;
+      var previousOverflow = root.style.overflow;
+      var targetScroll = push
+        ? 0
+        : history.state && typeof history.state.scrollY === "number"
+          ? history.state.scrollY
+          : 0;
+      root.style.overflow = "hidden";
       var controller = new AbortController();
       var timeout = setTimeout(function () { controller.abort(); }, 20000);
       fetch(url, {
@@ -194,15 +248,18 @@ const SCRIPT: &str = r#"<script>
         })
         .then(function (result) {
           clearTimeout(timeout);
-          if (push) history.pushState({ rusty: true }, "", result.url);
+          var hash = push ? new URL(result.url).hash : "";
+          if (push) history.pushState({ rusty: true, scrollY: 0 }, "", result.url);
           document.open();
           document.write(result.html);
           document.close();
+          scrollAfterLoad(hash, targetScroll);
         })
         .catch(function () {
           clearTimeout(timeout);
           window.__rustyNavigation.pending = false;
           current.remove();
+          root.style.overflow = previousOverflow;
           location.assign(url);
         });
     }
