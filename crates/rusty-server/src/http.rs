@@ -82,6 +82,8 @@ impl StatusCode {
     pub const CREATED: Self = Self(201);
     /// `204 No Content`.
     pub const NO_CONTENT: Self = Self(204);
+    /// `304 Not Modified`.
+    pub const NOT_MODIFIED: Self = Self(304);
     /// `400 Bad Request`.
     pub const BAD_REQUEST: Self = Self(400);
     /// `401 Unauthorized`.

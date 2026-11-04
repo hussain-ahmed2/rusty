@@ -27,7 +27,7 @@ bundles.
 - [x] Application route dispatch, static document wrapping, and API method routing
 - [x] Development rebuild-and-restart loop with file watching
 - [x] Blocking HTTP/1.1 transport with bounded headers and bodies
-- [x] Public static asset serving and validated build-time asset manifests
+- [x] Public static asset serving, validated build-time manifests, and conditional caching
 - [x] External CSS preprocessing for PostCSS, Tailwind CSS, Sass, and similar tools
 - [x] WebAssembly client builds and automatic client asset serving
 - [x] Standalone deployment bundles with app, public, and client artifacts
@@ -244,9 +244,12 @@ The development supervisor runs the application with `cargo run`, sets
 change. `rusty build` writes the application manifest and delegates native
 compilation to Cargo; `rusty start` runs it. Static responses use MIME types
 derived from file extensions, `Cache-Control: public, max-age=3600` in production,
-and `no-cache` in development. Async handlers, chunked SSR, loading boundaries,
-and same-origin client navigation are supported; platform-specific deployment
-adapters remain a future milestone.
+and `no-cache` in development. Static and generated client assets also receive
+content-based `ETag` and `Last-Modified` headers, and requests with matching
+`If-None-Match` or `If-Modified-Since` receive `304 Not Modified` without a body.
+Async handlers, chunked SSR, loading boundaries, and same-origin client
+navigation are supported; platform-specific deployment adapters remain a future
+milestone.
 
 ## Documentation site
 

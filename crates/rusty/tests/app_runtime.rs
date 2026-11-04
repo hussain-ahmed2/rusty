@@ -336,6 +336,62 @@ fn serves_public_assets_with_content_types_and_caching() {
 }
 
 #[test]
+fn serves_conditional_asset_requests() {
+    let public = TempDir::new("conditional");
+    fs::write(public.path.join("hello.txt"), "hello static").expect("text");
+
+    let router = Router::new().public_dir(&public.path);
+    let full = router
+        .handle(Request::new(Method::Get, "/hello.txt"))
+        .expect("asset");
+    assert_eq!(full.status(), StatusCode::OK);
+    let etag = full.headers().get("etag").expect("etag").to_owned();
+    assert!(etag.starts_with('"') && etag.ends_with('"'));
+    let last_modified = full.headers().get("last-modified").map(str::to_owned);
+
+    let response = router
+        .handle(
+            Request::new(Method::Get, "/hello.txt")
+                .with_header("if-none-match", etag.clone())
+                .expect("header"),
+        )
+        .expect("conditional asset");
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    assert!(response.body().is_empty());
+    assert_eq!(response.headers().get("etag"), Some(etag.as_str()));
+
+    let response = router
+        .handle(
+            Request::new(Method::Get, "/hello.txt")
+                .with_header("if-none-match", format!("W/{etag}"))
+                .expect("header"),
+        )
+        .expect("weak conditional asset");
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+
+    let response = router
+        .handle(
+            Request::new(Method::Get, "/hello.txt")
+                .with_header("if-none-match", "\"different\"")
+                .expect("header"),
+        )
+        .expect("stale conditional asset");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.body(), b"hello static");
+
+    if let Some(last_modified) = last_modified {
+        let response = router
+            .handle(
+                Request::new(Method::Get, "/hello.txt")
+                    .with_header("if-modified-since", last_modified)
+                    .expect("header"),
+            )
+            .expect("modified-since asset");
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    }
+}
+
+#[test]
 fn serves_generated_client_artifacts_under_the_reserved_prefix() {
     let client = TempDir::new("client");
     fs::write(client.path.join("demo_client.js"), "export default {};").expect("script");
