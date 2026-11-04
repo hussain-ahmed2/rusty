@@ -209,7 +209,7 @@ const SCRIPT: &str = r#"<script>
     element.setAttribute("aria-live", "polite");
     element.setAttribute(
       "style",
-      "position:fixed;inset:0;z-index:2147483647;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:Canvas;color:CanvasText"
+      "position:fixed;inset:0;z-index:2147483647;overflow-y:scroll;overflow-x:hidden;overscroll-behavior:contain;background:Canvas;color:CanvasText"
     );
     element.innerHTML = html || '<div style="padding:1rem;font:14px system-ui,sans-serif">Loading&hellip;</div>';
     (document.body || document.documentElement).appendChild(element);
