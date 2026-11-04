@@ -8,7 +8,7 @@ pub fn page(_context: &mut RequestContext) -> Result<Element, ServerError> {
         crate::content::DOCS
             .iter()
             .map(|doc| {
-                let href = crate::content::url(&format!("docs/{}/", doc.slug));
+                let href = crate::content::url(&format!("docs/{}", doc.slug));
                 let title = doc.title;
                 let summary = doc.summary;
                 view! {

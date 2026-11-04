@@ -23,9 +23,9 @@ pub fn page(_context: &mut RequestContext) -> Result<Element, ServerError> {
         ),
     ]);
 
-    let get_started = crate::content::url("docs/getting-started/");
-    let docs = crate::content::url("docs/");
-    let static_export = crate::content::url("docs/static-export/");
+    let get_started = crate::content::url("docs/getting-started");
+    let docs = crate::content::url("docs");
+    let static_export = crate::content::url("docs/static-export");
     Ok(view! {
         <main>
             <section class="hero">

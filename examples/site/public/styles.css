@@ -125,6 +125,11 @@ a:hover {
   text-decoration: underline;
 }
 
+.site-header nav a[aria-current="page"],
+.site-header nav a[aria-current="true"] {
+  color: var(--accent);
+}
+
 .site-main {
   min-height: calc(100vh - 12rem);
 }
@@ -354,6 +359,50 @@ hr {
   color: var(--text);
 }
 
+.docs-sidebar a[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.docs-pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 2.5rem;
+}
+
+.pager-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 1rem 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-decoration: none;
+}
+
+.pager-link:hover {
+  border-color: var(--accent);
+}
+
+.pager-link span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.pager-link strong {
+  font-size: 1.05rem;
+}
+
+.pager-link.next {
+  grid-column: 2;
+  text-align: right;
+}
+
 .site-footer {
   display: flex;
   flex-wrap: wrap;
@@ -489,6 +538,14 @@ hr {
   .callout,
   .docs-page {
     display: block;
+  }
+
+  .docs-pager {
+    grid-template-columns: 1fr;
+  }
+
+  .pager-link.next {
+    grid-column: auto;
   }
 
   .callout .button {

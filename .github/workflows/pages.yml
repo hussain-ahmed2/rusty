@@ -33,7 +33,9 @@ jobs:
         run: |
           test -f .pages/index.html
           test -f .pages/404.html
+          test -f .pages/docs.html
           test -f .pages/docs/index.html
+          test -f .pages/docs/getting-started.html
           test -f .pages/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:

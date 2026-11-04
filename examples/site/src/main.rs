@@ -36,7 +36,9 @@ fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
                 io::Error::other(format!("route `{path}` returned {}", response.status())).into(),
             );
         }
-        write_file(&output_file(output, &path)?, response.body())?;
+        for file in output_files(output, &path)? {
+            write_file(&file, response.body())?;
+        }
     }
 
     let not_found = router.handle(Request::new(Method::Get, "/__rusty_not_found__"))?;
@@ -66,25 +68,24 @@ fn reset_output(output: &Path) -> io::Result<()> {
     fs::create_dir_all(output)
 }
 
-fn output_file(output: &Path, path: &str) -> io::Result<PathBuf> {
+fn output_files(output: &Path, path: &str) -> io::Result<Vec<PathBuf>> {
     let route = path.trim_matches('/');
-    let mut file = output.to_path_buf();
     if route.is_empty() {
-        file.push("index.html");
-    } else {
-        if route
-            .split('/')
-            .any(|segment| segment.is_empty() || matches!(segment, "." | ".."))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("invalid route path `{path}`"),
-            ));
-        }
-        file.push(route);
-        file.push("index.html");
+        return Ok(vec![output.join("index.html")]);
     }
-    Ok(file)
+    if route
+        .split('/')
+        .any(|segment| segment.is_empty() || matches!(segment, "." | ".."))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid route path `{path}`"),
+        ));
+    }
+    Ok(vec![
+        output.join(format!("{route}.html")),
+        output.join(route).join("index.html"),
+    ])
 }
 
 fn write_file(path: &Path, body: &[u8]) -> io::Result<()> {
@@ -155,20 +156,25 @@ mod tests {
         assert!(home.contains("Build fast, typed web apps in Rust."));
         assert!(home.contains("__rusty_navigation_data"));
         assert!(home.contains("<meta name=\"rusty-base\" content=\"/\">"));
+        assert!(output.join("docs.html").is_file());
+        assert!(output.join("docs/getting-started.html").is_file());
         assert!(output.join("docs/getting-started/index.html").is_file());
+        assert!(output.join("about.html").is_file());
         assert!(output.join("404.html").is_file());
         assert!(output.join("styles.css").is_file());
         assert!(output.join(".nojekyll").is_file());
 
-        let docs = fs::read_to_string(output.join("docs/routing/index.html")).expect("docs");
+        let docs = fs::read_to_string(output.join("docs/routing.html")).expect("docs");
         assert!(docs.contains("File-based routing"));
-        assert!(docs.contains("docs/getting-started/"));
+        assert!(docs.contains("href=\"/docs/getting-started\""));
+        assert!(!docs.contains("href=\"/docs/getting-started/\""));
+        assert!(!home.contains("href=\"/docs/\""));
     }
 
     #[test]
     fn rejects_paths_that_escape_the_output() {
         let temp = TempDir::new("paths");
-        assert!(output_file(&temp.path, "/../secret").is_err());
-        assert!(output_file(&temp.path, "/docs//page").is_err());
+        assert!(output_files(&temp.path, "/../secret").is_err());
+        assert!(output_files(&temp.path, "/docs//page").is_err());
     }
 }

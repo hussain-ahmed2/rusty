@@ -4,7 +4,7 @@ use rusty::prelude::*;
 
 /// Renders the project overview.
 pub fn page(_context: &mut RequestContext) -> Result<Element, ServerError> {
-    let docs = crate::content::url("docs/");
+    let docs = crate::content::url("docs");
     Ok(view! {
         <main class="page narrow prose">
             <p class="eyebrow">"About"</p>

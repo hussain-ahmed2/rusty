@@ -4,8 +4,8 @@ use rusty::prelude::*;
 
 /// Renders the static 404 page.
 pub fn not_found() -> Element {
-    let home = crate::content::url("");
-    let docs = crate::content::url("docs/");
+    let home = crate::content::home_url();
+    let docs = crate::content::url("docs");
     view! {
         <main class="page narrow">
             <p class="eyebrow">"404"</p>

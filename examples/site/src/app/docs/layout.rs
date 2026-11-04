@@ -8,13 +8,13 @@ pub fn layout(children: Children) -> Element {
         crate::content::DOCS
             .iter()
             .map(|doc| {
-                let href = crate::content::url(&format!("docs/{}/", doc.slug));
+                let href = crate::content::url(&format!("docs/{}", doc.slug));
                 let title = doc.title;
                 view! { <li><a href={href}>{title}</a></li> }
             })
             .collect::<Vec<_>>(),
     );
-    let overview = crate::content::url("docs/");
+    let overview = crate::content::url("docs");
 
     view! {
         <main class="page docs-page">
