@@ -203,6 +203,9 @@ mod tests {
         assert!(home.contains("Build fast, typed web apps in Rust."));
         assert!(home.contains("__rusty_navigation_data"));
         assert!(home.contains("<meta name=\"rusty-base\" content=\"/\">"));
+        assert!(home.contains("<style>"));
+        assert!(home.contains("--bg:"));
+        assert!(!home.contains("rel=\"stylesheet\""));
         assert!(output.join("docs.html").is_file());
         assert!(output.join("docs/getting-started.html").is_file());
         assert!(output.join("docs/getting-started/index.html").is_file());
